@@ -226,17 +226,30 @@ def test_vectorized_kernel_matches_reference():
     assert toparlayan > 0, "batıp toparlanan senaryo yok — asıl uç durum test edilmedi"
 
 
-def test_numba_and_numpy_agree_when_numba_installed():
-    """numba kuruluysa iki uygulama aynı sonucu vermeli; değilse test atlanır."""
-    if not HAS_NUMBA:
-        return  # numba yok (Python 3.14) — NumPy yolu zaten yukarıda doğrulandı
+def test_kernel_and_numpy_agree():
+    """
+    Sıralı çekirdek ile vektörize NumPy sürümü aynı sonucu vermeli.
+
+    Bu test HER ZAMAN koşar, numba kurulu olmasa bile: @njit dekoratörü numba
+    yokken no-op'a döner, yani _simulate_paths_kernel saf Python olarak çalışır.
+    Eskiden numba yoksa sessizce atlanıyordu ve çekirdek hiç koşmadan repoda
+    duruyordu — 300x12'lik veri kümesi saf Python'da da anlık bittiği için
+    atlamanın hiçbir gerekçesi yokmuş.
+
+    numba KURULUYSA aynı test derlenmiş yolu doğrular; ikisi arasındaki tek
+    fark hız, sonuç bit-bit aynı olmalı.
+    """
     from utils.performance_utils import _simulate_paths_kernel, _simulate_paths_numpy
     rng = np.random.default_rng(11)
     rev = np.ascontiguousarray(rng.normal(6_800_000, 1_500_000, size=(300, 12)))
     exp = np.ascontiguousarray(rng.normal(5_950_000, 400_000, size=(300, 12)))
     a = _simulate_paths_kernel(4_200_000.0, rev, exp, 950_000.0)
     b = _simulate_paths_numpy(4_200_000.0, rev, exp, 950_000.0)
-    assert np.allclose(a[0], b[0]) and np.array_equal(a[1], b[1]) and np.array_equal(a[2], b[2])
+    assert np.allclose(a[0], b[0]), "nakit yolları uyuşmuyor"
+    assert np.array_equal(a[1], b[1]), "batan senaryo maskesi uyuşmuyor"
+    assert np.array_equal(a[2], b[2]), "ilk temerrüt ayı uyuşmuyor"
+    # Veri kümesi ayrıştırıcı mı — hepsi battıysa test hiçbir şey kanıtlamaz.
+    assert a[1].any() and not a[1].all(), "veri kümesi ayrıştırıcı değil"
 
 
 if __name__ == "__main__":

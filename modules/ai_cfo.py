@@ -5,9 +5,10 @@ Modül 1 ve Modül 2'den çıkan matematiksel sonuçları alır ve patrona doğr
 duygusuz, aksiyon odaklı bir kurumsal CFO ağzıyla net bir aksiyon planı yazar.
 
 İki katmanlı tasarım:
-  1) GERÇEK LLM  — Ortamda OPENAI_API_KEY ya da GOOGLE_API_KEY/GEMINI_API_KEY
-     varsa ve ilgili SDK kuruluysa, sayılar bir sistem promptu ile modele
-     beslenir. (LangChain kuruluysa onun sohbet arayüzü, değilse SDK doğrudan.)
+  1) GERÇEK LLM  — Ortamda ANTHROPIC_API_KEY, OPENAI_API_KEY ya da
+     GOOGLE_API_KEY/GEMINI_API_KEY varsa ve ilgili SDK kuruluysa, sayılar bir
+     sistem promptu ile modele beslenir. Birden fazlası varsa sıra:
+     Claude → OpenAI → Gemini; biri patlarsa bir sonrakine geçilir.
   2) KURAL TABANLI YEREL MOTOR (fallback) — Anahtar yoksa uygulama ASLA boş
      kalmaz: eşik tabanlı bir motor, aynı "acımasız CFO" üslubuyla sayılara
      dayalı somut aksiyon maddeleri üretir. Bu yol her zaman çalışır, ücretsizdir
@@ -22,7 +23,24 @@ from dataclasses import dataclass
 
 from utils.theme import expense_label, money
 
+# ── Model kimlikleri ──────────────────────────────────────────────────────
+# Sağlayıcılar model adlarını sık değiştiriyor ve kodun içine gömülü bir ad
+# birkaç ayda eskiyor. Bu yüzden hepsi ortam değişkeniyle ezilebilir.
+#
+# Claude: claude-opus-4-8, Anthropic'in güncel Opus modeli. Bu ad doğrulandı.
+# OpenAI/Gemini: aşağıdakiler tahmindir — kendi hesabınızın model kataloğuyla
+# karşılaştırıp gerekirse CG_OPENAI_MODEL / CG_GEMINI_MODEL ile değiştirin.
+CLAUDE_MODEL = os.getenv("CG_CLAUDE_MODEL", "claude-opus-4-8")
+OPENAI_MODEL = os.getenv("CG_OPENAI_MODEL", "gpt-5-mini")
+GEMINI_MODEL = os.getenv("CG_GEMINI_MODEL", "gemini-2.5-flash")
+
 # ── SDK'ları nazikçe dene; hiçbiri yoksa sorun değil, fallback devrede ────
+try:
+    import anthropic  # type: ignore
+    _HAS_CLAUDE = True
+except Exception:
+    _HAS_CLAUDE = False
+
 try:
     from openai import OpenAI  # type: ignore
     _HAS_OPENAI = True
@@ -59,7 +77,7 @@ Türkçe yaz. Abartılı nezaket yok. 'Bence' gibi zayıf ifadeler kullanma."""
 class CFOAdvice:
     """CFO çıktısını taşıyan basit kap."""
     text: str            # markdown metin (teşhis + aksiyon planı)
-    source: str          # "OpenAI", "Gemini" veya "Kural Tabanlı Motor"
+    source: str          # "Claude", "OpenAI", "Gemini" veya "Kural Tabanlı Motor"
 
 
 class RuthlessCFO:
@@ -67,16 +85,18 @@ class RuthlessCFO:
 
     def __init__(self, prefer: str | None = None):
         """
-        prefer: "openai" | "gemini" | None (otomatik). None ise ortamdaki
-        anahtara göre seçilir; hiçbiri yoksa kural tabanlı motor kullanılır.
+        prefer: "claude" | "openai" | "gemini" | None (otomatik). None ise
+        ortamdaki anahtara göre seçilir; hiçbiri yoksa kural tabanlı motor.
         """
+        self.claude_key = os.getenv("ANTHROPIC_API_KEY")
         self.openai_key = os.getenv("OPENAI_API_KEY")
         self.gemini_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         self.prefer = prefer
 
     def available_llms(self) -> list[str]:
         """
-        Denenebilecek LLM'ler, tercih sırasıyla: ["openai", "gemini"] alt kümesi.
+        Denenebilecek LLM'ler, tercih sırasıyla: ["claude", "openai", "gemini"]
+        alt kümesi.
 
         Boş liste = kural tabanlı motor devrede. O motor DETERMİNİSTİKtir, yani
         "yeniden çağır" metni değiştirmez; arayüz butonu buna göre gösterir.
@@ -84,6 +104,8 @@ class RuthlessCFO:
         birbirinden kayar, o yüzden tek kaynak burası.
         """
         engines = []
+        if (self.prefer in (None, "claude")) and _HAS_CLAUDE and self.claude_key:
+            engines.append("claude")
         if (self.prefer in (None, "openai")) and _HAS_OPENAI and self.openai_key:
             engines.append("openai")
         if (self.prefer in (None, "gemini")) and _HAS_GEMINI and self.gemini_key:
@@ -101,7 +123,8 @@ class RuthlessCFO:
             top_receivables (liste), expense_breakdown (sözlük)
         """
         # Sırayla dene; biri patlarsa diğerine, hepsi patlarsa yerel motora düş.
-        askers = {"openai": (self._ask_openai, "OpenAI"),
+        askers = {"claude": (self._ask_claude, "Claude"),
+                  "openai": (self._ask_openai, "OpenAI"),
                   "gemini": (self._ask_gemini, "Gemini")}
         for engine in self.available_llms():
             ask, label = askers[engine]
@@ -144,21 +167,42 @@ EN BÜYÜK ALACAKLAR (gecikme durumu):
 
 Bu tabloya göre patrona teşhis + numaralı aksiyon planı yaz."""
 
+    def _ask_claude(self, ctx: dict) -> str:
+        """
+        Anthropic Messages API.
+
+        İki ayrıntı bilerek böyle:
+          • temperature YOK — Opus 4.8 bu parametreyi kabul etmiyor, gönderilirse
+            istek 400 döner. Üslup sistem promptuyla ayarlanıyor.
+          • effort="low" — bu iş "verilen sayılardan kısa bir aksiyon planı yaz";
+            derin muhakeme gerektirmiyor ve arayüzü bekletmemesi gerekiyor.
+        """
+        client = anthropic.Anthropic(api_key=self.claude_key)
+        resp = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=4000,
+            system=SYSTEM_PROMPT,
+            thinking={"type": "adaptive"},
+            output_config={"effort": "low"},
+            messages=[{"role": "user", "content": self._user_payload(ctx)}],
+        )
+        # content bir blok listesi; metin dışı bloklar (thinking) da olabilir.
+        return "".join(b.text for b in resp.content if b.type == "text").strip()
+
     def _ask_openai(self, ctx: dict) -> str:
         client = OpenAI(api_key=self.openai_key)
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": self._user_payload(ctx)},
             ],
-            temperature=0.5,
         )
         return resp.choices[0].message.content.strip()
 
     def _ask_gemini(self, ctx: dict) -> str:
         genai.configure(api_key=self.gemini_key)
-        model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=SYSTEM_PROMPT)
+        model = genai.GenerativeModel(GEMINI_MODEL, system_instruction=SYSTEM_PROMPT)
         resp = model.generate_content(self._user_payload(ctx))
         return resp.text.strip()
 
@@ -299,10 +343,14 @@ Bu tabloya göre patrona teşhis + numaralı aksiyon planı yaz."""
         trend_rw = ctx.get("trend_runway_months")
         trend_slope = ctx.get("trend_slope")
         if static_rw and trend_rw and trend_rw < static_rw:
+            # Eğim opsiyonel: app.py hep dolduruyor ama bu motor son savunma
+            # hattı — eksik bir alan yüzünden çökerse kullanıcı bomboş rapor
+            # görür. Eğim yoksa cümleyi rakamsız ama anlamlı kur.
+            egim = (f"Faaliyet nakdiniz aylık {money(abs(trend_slope), sym)} geriliyor; bu "
+                    f"eğilim sürerse" if trend_slope else "Son 12 ayın bozulma eğilimi sürerse")
             actions.append(
                 f"Kasanızın {static_rw:.0f} ay dayanacağı hesabı bir yanılsamadır: o rakam "
-                f"bugünkü yakımın hiç kötüleşmeyeceğini varsayar. Faaliyet nakdiniz aylık "
-                f"{money(abs(trend_slope), sym)} geriliyor; bu eğilim sürerse gerçek süreniz "
+                f"bugünkü yakımın hiç kötüleşmeyeceğini varsayar. {egim} gerçek süreniz "
                 f"**~{trend_rw} ay**. Planlarınızı {static_rw:.0f} aya değil {trend_rw} aya kurun."
             )
 

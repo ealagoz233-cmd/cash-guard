@@ -635,7 +635,7 @@ regen = colb.button(
           if llm_engines else
           "Kural tabanlı motor deterministiktir — aynı sayılar aynı planı üretir, "
           "yeniden çağırmak metni değiştirmez. Farklı bir yorum için "
-          "OPENAI_API_KEY veya GOOGLE_API_KEY tanımlayın."),
+          "ANTHROPIC_API_KEY, OPENAI_API_KEY veya GOOGLE_API_KEY tanımlayın."),
 )
 if regen:
     get_cfo_advice.clear()  # önbelleği temizle, tazele

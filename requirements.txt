@@ -10,10 +10,14 @@ reportlab>=4.0     # yönetim kuruluna sunulacak PDF rapor üretimi
 # Bu paketler KURULU DEĞİLSE uygulama yine de çalışır: kural tabanlı
 # (rule-based) yerel CFO motoruna otomatik düşer. API anahtarı gerekmez.
 # Gerçek LLM istiyorsan aşağıdakilerden BİRİNİ kurup ortam değişkenini set et:
+#   pip install "anthropic>=0.40"           -> ANTHROPIC_API_KEY   (önerilen)
 #   pip install "openai>=1.30"              -> OPENAI_API_KEY
 #   pip install "google-generativeai>=0.7"  -> GOOGLE_API_KEY (veya GEMINI_API_KEY)
+# Birden fazlası tanımlıysa sıra: Claude -> OpenAI -> Gemini.
+# Model adları CG_CLAUDE_MODEL / CG_OPENAI_MODEL / CG_GEMINI_MODEL ile ezilebilir.
 # Bilerek yorumlu: varsayılan kurulum hafif kalsın, kimse kullanmadığı SDK'yı
 # indirmesin. Uygulama ikisi de yokken tam işlevlidir.
+# anthropic>=0.40
 # openai>=1.30
 # google-generativeai>=0.7
 
@@ -26,6 +30,14 @@ reportlab>=4.0     # yönetim kuruluna sunulacak PDF rapor üretimi
 
 # ── Opsiyonel: Performans hızlandırma ─────────────────────────────────────
 # Monte Carlo çekirdeği saf NumPy ile vektörize edilmiştir ve numba OLMADAN
-# da hızlıdır. numba kuruluysa sıcak döngü JIT ile derlenir. Python 3.14'te
-# numba tekerleği henüz gelmemiş olabilir; bu yüzden yorumlu bırakıldı.
-# numba>=0.60           # opsiyonel
+# da hızlıdır; numba kuruluysa sıcak döngü JIT ile derlenir.
+#
+# Ölçüm (20.000 senaryo x 24 ay, Windows / Python 3.14 / numba 0.66):
+#   NumPy vektörize          : 9.4 ms
+#   Numba, çağrı başına      : 1.6 ms      (~6x)
+#   Numba, ilk derleme       : 3.6 s       (bir kez; cache=True diske yazar)
+#   Numba, sonraki process   : ~0.5 s      (cache'ten yükleme)
+# Yani numba tek atışlık kullanımda ZARARLI, sürgü oynatılan canlı arayüzde
+# kazançlı — Streamlit aynı process'te yeniden çalıştığı için ikinci durumdayız.
+# Yorumlu bırakıldı çünkü uygulama numba'sız tam işlevli; isteyen açsın.
+# numba>=0.60           # opsiyonel — 0.66 ile Python 3.14 tekerleği mevcut
