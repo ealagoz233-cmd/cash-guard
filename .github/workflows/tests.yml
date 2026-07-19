@@ -48,13 +48,17 @@ jobs:
       # değişiyor (Windows'ta Arial, Linux'ta DejaVu). Testler her iki durumda
       # da geçiyor — rapor gerekirse TL'ye düşüyor — ama hangi durumda
       # olduğumuzu bilmek istiyoruz. Bu adım cevabı loga yazar.
+      # NOT: cikti ASCII olmali. Ilk surumu '₺' karakterini basiyordu ve
+      # Windows runner'inin cp1252 konsolu bunu kaldiramayip UnicodeEncodeError
+      # ile isi dusurdu. Karakterin kendisi yerine kod noktasi yaziliyor.
       - name: PDF font ve para birimi kararı (bilgi)
         run: |
           python -c "
           from modules import report
-          print('font        :', report._FONT)
-          print('₺ glyph var :', report._font_has('₺'))
-          print('secilen sim :', report._usable_symbol('₺'))
+          lira = chr(0x20BA)
+          print('font           :', report._FONT)
+          print('U+20BA glyph   :', report._font_has(lira))
+          print('secilen simge  :', 'U+20BA' if report._usable_symbol(lira) == lira else 'TL')
           "
 
   # ── Numba hızlandırma yolu ──────────────────────────────────────────────
