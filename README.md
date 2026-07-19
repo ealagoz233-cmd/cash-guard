@@ -4,6 +4,11 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue.svg)](https://www.python.org/)
 
+### ▶️ [Canlı demo: cash-guard-eren.streamlit.app](https://cash-guard-eren.streamlit.app)
+
+Kurulum gerekmez — örnek şirket verisiyle açılır, sürgüleri oynatıp kredi
+senaryosunu kendin sınayabilir, Türkçe PDF raporu indirebilirsin.
+
 **Kurumsal Nakit Hayatta Kalma & Kredi Stres Testi Motoru**
 
 Şirketler kârsızlıktan değil, **nakitsizlikten ve yanlış borçlanmadan** batar.
