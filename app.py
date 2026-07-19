@@ -28,6 +28,7 @@ import streamlit as st
 from modules import loan_simulator as ls
 from modules import monte_carlo as mc
 from modules import scenario
+from modules import store
 from modules.ai_cfo import RuthlessCFO
 from modules.data_io import REQUIRED_HISTORY_COLS, load_mock, parse_uploaded
 from modules.report import build_report
@@ -625,6 +626,65 @@ s2.metric("Kötü Senaryo (p5) 12. Ay", money(mc_res.p5_end_cash, sym),
           delta_color="inverse")
 s3.metric("Beklenen İflas Ayı",
           f"{mc_res.expected_ruin_month:.1f}" if mc_res.expected_ruin_month else "—")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  SENARYO DEFTERİ — birkaç senaryoyu yan yana koy
+# ══════════════════════════════════════════════════════════════════════════
+# Bir CFO aracının asıl işi tek senaryo hesaplamak değil, seçenekleri
+# karşılaştırmaktır: "10M kredi mi, 5M mi, hiç çekmemek mi?"
+theme.section("Senaryo Defteri — Seçenekleri Yan Yana Koy", chip="KARŞILAŞTIR")
+
+if "defter" not in st.session_state:
+    st.session_state.defter = []
+
+kay1, kay2 = st.columns([2, 1])
+with kay1:
+    _ad = st.text_input("Bu senaryoya bir ad ver", value="", max_chars=store.MAX_AD,
+                        placeholder=f"örn. {money(loan_amount, sym)} kredi · {loan_term} ay")
+with kay2:
+    st.write("")
+    if st.button("💾 Senaryoyu Kaydet", width="stretch"):
+        st.session_state.defter = store.kaydet(
+            st.session_state.defter,
+            _ad or f"{money(loan_amount, sym)} · {loan_term} ay",
+            _guncel,
+            {"batma_yuzde": round(ruin_pct, 1),
+             "iflas_ayi": (round(mc_res.expected_ruin_month)
+                           if mc_res.expected_ruin_month else None),
+             "aylik_net": round(monthly_net)},
+        )
+
+if st.session_state.defter:
+    st.dataframe(pd.DataFrame(store.karsilastirma_tablosu(st.session_state.defter)),
+                 width="stretch", hide_index=True)
+
+    sil1, sil2, sil3 = st.columns([2, 1, 1])
+    _silinecek = sil1.selectbox("Kaydı sil",
+                                [k["ad"] for k in st.session_state.defter],
+                                label_visibility="collapsed")
+    if sil2.button("🗑️ Sil", width="stretch"):
+        st.session_state.defter = store.sil(st.session_state.defter, _silinecek)
+        st.rerun()
+    sil3.download_button(
+        "⬇️ Defteri İndir", data=store.disa_aktar(st.session_state.defter),
+        file_name="cash_guard_senaryolar.json", mime="application/json",
+        width="stretch",
+    )
+else:
+    st.caption("Henüz kayıt yok. Sürgüleri ayarlayıp bir senaryoyu kaydet, "
+               "sonra başka bir senaryo deneyip ikisini yan yana gör.")
+
+_yuklenen_defter = st.file_uploader(
+    "Daha önce indirdiğin defteri geri yükle (JSON)", type=["json"],
+    help="Kayıtlar sunucuda tutulmaz; kalıcılık indirdiğin dosyadadır.")
+if _yuklenen_defter is not None:
+    _gelen = store.ice_aktar(_yuklenen_defter.getvalue())
+    if _gelen:
+        st.session_state.defter = _gelen
+        st.success(f"{len(_gelen)} kayıt geri yüklendi.")
+    else:
+        st.error("Dosya okunamadı ya da içinde geçerli kayıt yok.")
 
 
 # ══════════════════════════════════════════════════════════════════════════

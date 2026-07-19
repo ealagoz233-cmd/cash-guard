@@ -135,6 +135,20 @@ kuruyor; `modules/report.py` DejaVu'yu Linux'ta ilk aday olarak arar.
 
 ---
 
+## Senaryo defteri
+
+Bir CFO aracının asıl işi tek senaryo hesaplamak değil, seçenekleri
+karşılaştırmaktır. Sürgüleri ayarla, senaryoyu adlandırıp kaydet, sonra
+başka bir senaryo dene — ikisi tabloda yan yana durur.
+
+**Kalıcılık bilinçli olarak kullanıcıda:** kayıtlar sunucuda tutulmaz,
+istersen defteri JSON olarak indirir ve sonra geri yüklersin. İki sebep:
+uygulamanın kimlik doğrulaması yok (ortak bir veritabanı herkesin analizini
+herkese açardı) ve Streamlit Cloud'un diski kalıcı değil — "kaydettim" deyip
+yeniden başlatmada veriyi kaybetmek, hiç kaydetmemekten kötüdür.
+
+---
+
 ## HTTP API (opsiyonel)
 
 Streamlit arayüzü motorun **bir** tüketicisi; aynı motor HTTP üzerinden de
