@@ -93,6 +93,10 @@ def inject_css() -> None:
             border-radius:16px; padding:16px 18px; height:100%;
             box-shadow: 0 8px 24px #00000040, inset 0 1px 0 #ffffff08;
             position:relative; overflow:hidden;
+            /* Değer yazısının kart genişliğine göre ölçeklenebilmesi için
+               (cqw birimi buna bağlı). Ekran genişliği yetmez: sidebar
+               açılınca ekran aynı kalır ama kolonlar daralır. */
+            container-type: inline-size;
         }}
         .cg-kpi::before {{
             content:""; position:absolute; left:0; top:0; bottom:0; width:4px;
@@ -104,7 +108,16 @@ def inject_css() -> None:
             text-transform:uppercase; letter-spacing:0.8px;
         }}
         .cg-kpi .cg-kpi-value {{
-            font-size:29px; font-weight:800; margin-top:6px; line-height:1.05;
+            /* Sabit 29px'ti ve dar kolonda sayı ORTADAN bölünüyordu:
+               "₺4.200.000" monospace'te ~174px ister; kolon darsa tarayıcı
+               boşluksuz diziyi kırıp "₺4.200.0 / 00" yapıyordu. Üstelik eksi
+               işareti tek başına alt satıra düşüyordu.
+               Çözüm üç parça: sayı asla kırılmasın (nowrap + keep-all), yazı
+               kart genişliğine göre küçülsün (cqw), ama okunaklılık için
+               14px'in altına inmesin ve 29px'i aşmasın. */
+            font-size: clamp(14px, 13cqw, 29px);
+            white-space: nowrap; word-break: keep-all; overflow-wrap: normal;
+            font-weight:800; margin-top:6px; line-height:1.05;
             font-variant-numeric: tabular-nums; color:var(--accent, {COLORS['text']});
             font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
         }}
