@@ -1,0 +1,18 @@
+# Cash Guard — Streamlit tema ayarları (kurumsal karanlık mod)
+# Not: Asıl "war-room" görünümü utils/theme.py içindeki CSS ile veriliyor;
+# buradaki değerler Streamlit'in temel widget renklerini uyumlu tutar.
+
+[theme]
+base = "dark"
+primaryColor = "#00E0A4"          # Guardian yeşil-camgöbeği (aksiyon/pozitif)
+backgroundColor = "#0A0E17"       # Derin karbon-lacivert
+secondaryBackgroundColor = "#141B2D"  # Panolar / sidebar
+textColor = "#E6EDF3"
+font = "sans serif"
+
+[server]
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false

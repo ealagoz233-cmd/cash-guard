@@ -1,0 +1,52 @@
+{
+  "company_name": "Anadolu Tekstil Sanayi A.Ş.",
+  "sector": "Üretim / İhracat (Tekstil)",
+  "currency": "TRY",
+  "as_of": "2026-06-30",
+
+  "_comment": "Kârlı görünen ama nakit trendi aşağı eğimli, klasik 'zombi şirket' adayı. Alacaklar şişmiş, tahsilat vadesi uzamış, kasa erimekte. Uygulama açılır açılmaz dolu ekranla 'şov' yapsın diye hazırlandı.",
+
+  "current_cash": 4200000,
+  "existing_debt": 12500000,
+  "existing_monthly_debt_service": 950000,
+
+  "avg_monthly_revenue": 7200000,
+  "avg_monthly_collections": 6800000,
+  "_collections_note": "Faturalanan gelir 7.200.000 ama fiilen tahsil edilen sadece 6.800.000. Aradaki ~400K/ay alacaklarda sıkışıyor — nakit modeli bu (tahsilat) rakamını kullanır, faturalanan geliri DEĞİL. Şirketin 'kârlı görünüp nakitsiz batma' hikâyesinin kaynağı budur.",
+  "avg_monthly_fixed_expense": 5950000,
+
+  "receivables_outstanding": 9300000,
+  "avg_collection_days": 78,
+
+  "_history_note": "Tablo, yukarıdaki üst düzey skalerlerle BİREBİR tutarlıdır — ortalamalar tam olarak gelir 7.200.000, tahsilat 6.800.000, gider 5.950.000 verir ve kasa yürüyüşü (cash_end[t] = cash_end[t-1] + tahsilat − gider − 950.000 borç servisi) kuruşu kuruşuna tutar. Hikâye: faturalanan gelir neredeyse SABİT (~7.2M) kalırken tahsilat aylık düşüyor; alacak boşluğu 395K'dan 481K'ya genişliyor. Sonuç: kâğıt üstünde her şey yolunda görünürken kasa hızlanan bir tempoyla 5.75M'den 4.2M'ye eriyor. İlk ay (2025-07) son sağlıklı ay: eski alacaklar tahsil edildiği için boşluk yalnızca 100K. NOT: bu seriyi değiştirirsen ortalamaların ve yürüyüşün hâlâ tuttuğunu doğrula, yoksa KPI kartı ile grafik altı yazı farklı sayı gösterir.",
+  "history": [
+    { "month": "2025-07", "revenue": 7300000, "fixed_expense": 5900000, "collections": 7200000, "cash_end": 5750000 },
+    { "month": "2025-08", "revenue": 7250000, "fixed_expense": 5905000, "collections": 6855000, "cash_end": 5750000 },
+    { "month": "2025-09", "revenue": 7230000, "fixed_expense": 5915000, "collections": 6837000, "cash_end": 5722000 },
+    { "month": "2025-10", "revenue": 7215000, "fixed_expense": 5925000, "collections": 6819000, "cash_end": 5666000 },
+    { "month": "2025-11", "revenue": 7200000, "fixed_expense": 5935000, "collections": 6800000, "cash_end": 5581000 },
+    { "month": "2025-12", "revenue": 7195000, "fixed_expense": 5945000, "collections": 6782000, "cash_end": 5468000 },
+    { "month": "2026-01", "revenue": 7190000, "fixed_expense": 5955000, "collections": 6764000, "cash_end": 5327000 },
+    { "month": "2026-02", "revenue": 7180000, "fixed_expense": 5965000, "collections": 6746000, "cash_end": 5158000 },
+    { "month": "2026-03", "revenue": 7170000, "fixed_expense": 5975000, "collections": 6728000, "cash_end": 4961000 },
+    { "month": "2026-04", "revenue": 7165000, "fixed_expense": 5985000, "collections": 6709000, "cash_end": 4735000 },
+    { "month": "2026-05", "revenue": 7155000, "fixed_expense": 5995000, "collections": 6691000, "cash_end": 4481000 },
+    { "month": "2026-06", "revenue": 7150000, "fixed_expense": 6000000, "collections": 6669000, "cash_end": 4200000 }
+  ],
+
+  "top_receivables": [
+    { "customer": "Mega Perakende Zinciri A.Ş.", "amount": 3150000, "overdue_days": 92 },
+    { "customer": "Batı Toptan Tekstil Ltd.",     "amount": 2280000, "overdue_days": 74 },
+    { "customer": "Doğu Giyim Dağıtım",           "amount": 1640000, "overdue_days": 61 },
+    { "customer": "Yıldız İhracat Grubu",         "amount": 1230000, "overdue_days": 38 },
+    { "customer": "Diğer (dağınık bayiler)",       "amount": 1000000, "overdue_days": 25 }
+  ],
+
+  "expense_breakdown": {
+    "personel": 2650000,
+    "kira_ve_isletme": 780000,
+    "hammadde_ve_tedarik": 1620000,
+    "pazarlama": 520000,
+    "enerji_ve_lojistik": 380000
+  }
+}

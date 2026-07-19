@@ -1,0 +1,24 @@
+# ── Cash Guard — Bağımlılıklar ─────────────────────────────────────────────
+# Çekirdek (zorunlu). Sürümler alt sınır olarak verildi; daha yenisi de çalışır.
+streamlit>=1.49    # width="stretch" API'si (use_container_width 2025 sonunda kaldırıldı)
+pandas>=2.2
+numpy>=1.26
+plotly>=5.22
+reportlab>=4.0     # yönetim kuruluna sunulacak PDF rapor üretimi
+
+# ── Opsiyonel: Yapay Zeka "Acımasız CFO" ajanı ────────────────────────────
+# Bu paketler KURULU DEĞİLSE uygulama yine de çalışır: kural tabanlı
+# (rule-based) yerel CFO motoruna otomatik düşer. API anahtarı gerekmez.
+# Gerçek LLM istiyorsan aşağıdakilerden BİRİNİ kurup ortam değişkenini set et:
+#   pip install "openai>=1.30"              -> OPENAI_API_KEY
+#   pip install "google-generativeai>=0.7"  -> GOOGLE_API_KEY (veya GEMINI_API_KEY)
+# Bilerek yorumlu: varsayılan kurulum hafif kalsın, kimse kullanmadığı SDK'yı
+# indirmesin. Uygulama ikisi de yokken tam işlevlidir.
+# openai>=1.30
+# google-generativeai>=0.7
+
+# ── Opsiyonel: Performans hızlandırma ─────────────────────────────────────
+# Monte Carlo çekirdeği saf NumPy ile vektörize edilmiştir ve numba OLMADAN
+# da hızlıdır. numba kuruluysa sıcak döngü JIT ile derlenir. Python 3.14'te
+# numba tekerleği henüz gelmemiş olabilir; bu yüzden yorumlu bırakıldı.
+# numba>=0.60           # opsiyonel
