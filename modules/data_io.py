@@ -16,6 +16,7 @@ app.py bir Streamlit script'i olduğu için import edilemez, bu modül edilebili
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -31,6 +32,20 @@ _MOCK_ONLY_KEYS = ("history", "top_receivables", "expense_breakdown", "sector",
 
 # Geçmiş trend grafiğinin çizilebilmesi için gereken asgari sütunlar.
 REQUIRED_HISTORY_COLS = {"month", "revenue"}
+
+# Dosya adında görüntülemeye izin verilen karakterler. Adı arayüzde gösteriyoruz
+# ve orası ham HTML; kaçırma arayüz tarafında da yapılıyor ama veriye zaten
+# temiz girsin (savunmanın tek katmana bağlı kalmaması için).
+_SAFE_NAME = re.compile(r"[^\w .\-()]+", re.UNICODE)
+_MAX_NAME_LEN = 60
+
+
+def safe_display_name(name: str) -> str:
+    """Dosya adını arayüzde gösterilebilir, zararsız bir metne indirger."""
+    cleaned = _SAFE_NAME.sub("", str(name)).strip()
+    if len(cleaned) > _MAX_NAME_LEN:
+        cleaned = cleaned[:_MAX_NAME_LEN] + "…"
+    return cleaned or "yüklenen dosya"
 
 
 @st.cache_data(show_spinner=False)
@@ -71,7 +86,7 @@ def parse_uploaded(file) -> dict | None:
         for k in _MOCK_ONLY_KEYS:
             base.pop(k, None)
         base["company_name"] = "Yüklenen Şirket Verisi"
-        base["as_of"] = f"{file.name} (yüklendi)"
+        base["as_of"] = f"{safe_display_name(file.name)} (yüklendi)"
 
         # ── Biçim A: iki sütunlu anahtar-değer ────────────────────────────
         if {"alan", "deger"} <= cols or {"field", "value"} <= cols:

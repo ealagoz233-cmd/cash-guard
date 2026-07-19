@@ -98,9 +98,11 @@ if data is None:
 
 sym = "₺" if data.get("currency", "TRY") == "TRY" else "$"
 
+# Not: değerler kullanıcı verisinden geliyor (yüklenen dosyanın adı dahil),
+# ham HTML'e girmeden önce theme.esc ile kaçırılır.
 st.sidebar.markdown(
-    f'<div class="cg-badge">🏭 {data.get("company_name","—")}</div>'
-    f'<div class="cg-badge">📅 {data.get("as_of","—")}</div>',
+    f'<div class="cg-badge">🏭 {theme.esc(data.get("company_name", "—"))}</div>'
+    f'<div class="cg-badge">📅 {theme.esc(data.get("as_of", "—"))}</div>',
     unsafe_allow_html=True,
 )
 
@@ -436,6 +438,12 @@ c2.metric("Vade Sonu Toplam Faiz", money(loan_res["total_interest"], sym))
 relief = loan_res["relief_months"]
 if loan_amount <= 0:
     c3.metric("Kredinin Etkisi", "—", delta="Senaryo yok", delta_color="off")
+elif loan_res["default_with_loan"] is None and loan_res["default_without_loan"] is None \
+        and relief == 0:
+    # Sağlıklı şirket: hiçbir senaryoda temerrüt yok. "+0 ay · sadece morfin"
+    # demek burada yanıltıcıydı.
+    c3.metric("Kredinin Etkisi", "Temerrüt yok",
+              delta="Her iki senaryoda da güvenli", delta_color="off")
 elif relief < 0:
     # Kredi iflası öne çekiyor → borç tuzağı
     c3.metric("Krediyle İflas", f"{abs(relief)} ay erken",

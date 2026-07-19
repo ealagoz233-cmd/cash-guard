@@ -14,7 +14,21 @@ Palet:
 """
 from __future__ import annotations
 
+import html
+
 import streamlit as st
+
+
+def esc(value) -> str:
+    """
+    Ham HTML'e gömülecek her DEĞİŞKEN bundan geçmeli.
+
+    Bu dosyadaki bileşenler `unsafe_allow_html=True` ile basılıyor; içine giren
+    metin ise kullanıcı verisinden gelebiliyor (şirket adı, yüklenen dosyanın
+    adı). Kaçırılmazsa `<img src=x onerror=...>` adlı bir dosya sayfaya ham
+    HTML olarak enjekte olur — bir kez böyle bir açık oluştu, bu yüzden burada.
+    """
+    return html.escape(str(value), quote=True)
 
 # ── Renk sabitleri (modüller de bu paletten çeksin diye dışa açık) ────────
 COLORS = {
@@ -170,13 +184,19 @@ def brand_header() -> None:
 
 
 def kpi_card(label: str, value: str, sub: str = "", accent: str | None = None) -> str:
-    """Tek bir KPI kartının HTML'ini döndürür (st.columns içine yazılır)."""
+    """
+    Tek bir KPI kartının HTML'ini döndürür (st.columns içine yazılır).
+
+    Metin alanları kaçırılır: çağıranlar düz metin veriyor ve bir kısmı
+    kullanıcı verisinden türüyor. Kart içinde HTML gerekirse bu bilinçli
+    olarak değiştirilmeli, kazara değil.
+    """
     accent = accent or COLORS["guardian"]
     return (
         f'<div class="cg-kpi" style="--accent:{accent};">'
-        f'<div class="cg-kpi-label">{label}</div>'
-        f'<div class="cg-kpi-value">{value}</div>'
-        f'<div class="cg-kpi-sub">{sub}</div>'
+        f'<div class="cg-kpi-label">{esc(label)}</div>'
+        f'<div class="cg-kpi-value">{esc(value)}</div>'
+        f'<div class="cg-kpi-sub">{esc(sub)}</div>'
         f"</div>"
     )
 

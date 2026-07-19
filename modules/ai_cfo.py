@@ -190,9 +190,22 @@ Bu tabloya göre patrona teşhis + numaralı aksiyon planı yaz."""
                     f"**%{ruin:.1f}** — yani her üç senaryodan birinde kasa dibi görüyor. "
                     f"Şansa değil, disipline oynayacağız.")
         else:
-            tone = (f"Sayın Yönetici, kasa şimdilik ayakta: batma olasılığı **%{ruin:.1f}**. "
-                    f"Ama rehavete gerek yok; nakit trendiniz aşağı eğimli, gevşerseniz "
-                    f"bu oran hızla tırmanır.")
+            # Trendin yönünü VERİDEN oku. Sabit "trendiniz aşağı eğimli" cümlesi,
+            # nakit üretimi artan sağlıklı bir şirkette düpedüz yanlış oluyordu.
+            slope = ctx.get("trend_slope")
+            if slope is not None and slope > 0:
+                trend_cumle = ("üstelik faaliyet nakdiniz aylık "
+                               f"{money(slope, sym)} İYİLEŞİYOR. Bu ivmeyi kalıcı "
+                               f"kılacak yatırımlar dışında yeni sabit gider almayın")
+            elif slope is not None and slope < 0:
+                trend_cumle = ("ama rehavete gerek yok: faaliyet nakdiniz aylık "
+                               f"{money(abs(slope), sym)} geriliyor, gevşerseniz "
+                               f"bu oran hızla tırmanır")
+            else:
+                trend_cumle = ("yine de nakit trendini yakından izleyin; bu oran "
+                               "hızla tırmanabilir")
+            tone = (f"Sayın Yönetici, kasa şimdilik ayakta: batma olasılığı "
+                    f"**%{ruin:.1f}** — {trend_cumle}.")
 
         # Kredi hükmü (relief İŞARETLİ: + zaman kazandırır, − iflası öne çeker)
         if loan > 0:

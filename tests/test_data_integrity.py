@@ -25,8 +25,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from modules.data_io import REQUIRED_HISTORY_COLS, load_mock, normalize_history, parse_uploaded
-from utils.theme import expense_label
+from modules.data_io import (REQUIRED_HISTORY_COLS, load_mock, normalize_history,
+                             parse_uploaded, safe_display_name)
+from utils.theme import esc, expense_label, kpi_card
 
 DEBT_SERVICE_KEY = "existing_monthly_debt_service"
 
@@ -120,7 +121,38 @@ def test_normalize_history_fills_missing_columns():
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  3) Türkçe etiketler (.title() bozuyordu)
+#  3) HTML enjeksiyonu — arayüz unsafe_allow_html kullanıyor
+# ══════════════════════════════════════════════════════════════════════════
+def test_uploaded_filename_cannot_inject_html():
+    """
+    Yüklenen dosyanın adı sidebar'da HAM HTML içinde gösteriliyor. Bir kez
+    kaçırılmadan basılıyordu; `<img src=x onerror=...>.csv` adlı bir dosya
+    sayfaya kod enjekte edebiliyordu.
+    """
+    zararli = "<img src=x onerror=alert(1)>.csv"
+    d = parse_uploaded(FakeUpload(zararli, "alan,deger\ncurrent_cash,500000\n"
+                                           "avg_monthly_revenue,900000\n"))
+    assert "<" not in d["as_of"] and ">" not in d["as_of"], d["as_of"]
+
+
+def test_safe_display_name_strips_markup_and_limits_length():
+    assert "<" not in safe_display_name("<script>alert(1)</script>.csv")
+    assert len(safe_display_name("a" * 500)) <= 61          # 60 + kısaltma işareti
+    assert safe_display_name("<<<>>>") == "yüklenen dosya"  # her şey elenirse
+    assert safe_display_name("2026 Bütçe (nihai).xlsx") == "2026 Bütçe (nihai).xlsx"
+
+
+def test_esc_neutralizes_markup():
+    assert esc("<b>x</b>") == "&lt;b&gt;x&lt;/b&gt;"
+
+
+def test_kpi_card_escapes_its_fields():
+    """KPI kartına giren metin ham HTML olarak yorumlanmamalı."""
+    assert "<script>" not in kpi_card("<script>", "<script>", "<script>")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  4) Türkçe etiketler (.title() bozuyordu)
 # ══════════════════════════════════════════════════════════════════════════
 def test_turkish_expense_labels():
     assert expense_label("kira_ve_isletme") == "Kira ve İşletme"

@@ -41,10 +41,32 @@ _FONT, _FONT_B = "Helvetica", "Helvetica-Bold"
 
 
 def _register_fonts() -> None:
+    """
+    Türkçe destekli bir TrueType font kaydeder.
+
+    Adaylar Windows + Linux + macOS'u kapsar: uygulama Linux bir sunucuya
+    (ör. Streamlit Cloud) kurulduğunda Windows fontları bulunamıyor ve
+    Helvetica'ya düşülüyordu. Helvetica'nın WinAnsi kodlaması ç/ö/ü'yü taşır
+    ama ğ, ı, ş, İ harflerini TAŞIMAZ — yani rapor sessizce bozuk Türkçe
+    basardı. DejaVu ve Liberation neredeyse her Linux dağıtımında bulunur.
+    """
     global _FONT, _FONT_B
     candidates = [
+        # Windows
         ("CG", "CG-Bold", "C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
         ("CG", "CG-Bold", "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/segoeuib.ttf"),
+        # Linux (Debian/Ubuntu — Streamlit Cloud dahil)
+        ("CG", "CG-Bold",
+         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+        ("CG", "CG-Bold",
+         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+        # macOS
+        ("CG", "CG-Bold", "/Library/Fonts/Arial.ttf", "/Library/Fonts/Arial Bold.ttf"),
+        ("CG", "CG-Bold",
+         "/System/Library/Fonts/Supplemental/Arial.ttf",
+         "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
     ]
     for reg, regb, path, pathb in candidates:
         try:
