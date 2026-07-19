@@ -135,6 +135,41 @@ kuruyor; `modules/report.py` DejaVu'yu Linux'ta ilk aday olarak arar.
 
 ---
 
+## HTTP API (opsiyonel)
+
+Streamlit arayüzü motorun **bir** tüketicisi; aynı motor HTTP üzerinden de
+kullanılabilir. Hesap mantığı kopyalanmaz — her iki yol da `modules/` altındaki
+aynı kodu çağırır, böylece iki arayüz aynı şirket için farklı sayı gösteremez.
+
+```bash
+pip install -r requirements-api.txt
+uvicorn api:app --reload
+# http://localhost:8000/docs  → otomatik arayüz
+```
+
+| Uç nokta | Ne yapar |
+|---|---|
+| `GET /health` | Servis ayakta mı |
+| `POST /simulate` | Monte Carlo: batma olasılığı, beklenen iflas ayı, nakit ömrü |
+| `POST /loan` | Kredi senaryosu: taksit, toplam faiz, borç tuzağı analizi |
+| `POST /advise` | Acımasız CFO aksiyon planı (LLM ya da kural tabanlı motor) |
+
+```bash
+curl -X POST http://localhost:8000/simulate \
+  -H "Content-Type: application/json" \
+  -d '{"current_cash":4200000,"monthly_revenue":6800000,"monthly_fixed_expense":5950000}'
+```
+
+> Girdiler doğrulanır ve Monte Carlo iterasyon sayısı 50.000 ile sınırlıdır.
+> Servis dışarı açılırsa girdiler güvenilmezdir; sınırsız iterasyon tek bir
+> istekle sunucunun CPU'sunu tüketmeye davetiye olurdu.
+>
+> `/simulate` varsayılanları motorun kendi varsayılanlarıdır; arayüzdeki
+> sürgülerin başlangıç değerleriyle birebir aynı değildir. Aynı sonucu
+> istiyorsan stres parametrelerini istekte açıkça gönder.
+
+---
+
 ## Kendi verini yükleme biçimleri
 
 Sidebar'daki yükleyici iki biçim kabul eder:

@@ -1,0 +1,11 @@
+# ── Cash Guard API — ek bağımlılıklar ─────────────────────────────────────
+# Ayrı dosya, çünkü Streamlit dağıtımının bunlara ihtiyacı yok: requirements
+# .txt'e eklenirse Streamlit Cloud her kurulumda gereksiz paket indirir.
+#
+# Kullanım:
+#   pip install -r requirements.txt -r requirements-api.txt
+#   uvicorn api:app --reload
+-r requirements.txt
+
+fastapi>=0.115
+uvicorn[standard]>=0.30
