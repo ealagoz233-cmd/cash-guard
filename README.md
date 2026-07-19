@@ -1,5 +1,6 @@
 # 🛡️ Cash Guard
 
+[![tests](https://github.com/ealagoz233-cmd/cash-guard/actions/workflows/tests.yml/badge.svg)](https://github.com/ealagoz233-cmd/cash-guard/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue.svg)](https://www.python.org/)
 

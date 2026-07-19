@@ -1,0 +1,106 @@
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ── Ana test matrisi ────────────────────────────────────────────────────
+  # Linux BİLEREK var: deploy hedefi (Streamlit Cloud) Linux ve PDF font
+  # sorunu yalnızca orada ortaya çıkıyordu. Windows geliştirme makinesi.
+  test:
+    name: ${{ matrix.os }} · py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      # Türkçe karakterli PDF için TrueType font. packages.txt ile aynı paket —
+      # Streamlit Cloud'daki ortamı burada birebir taklit ediyoruz.
+      - name: Türkçe uyumlu font kur (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-dejavu-core
+
+      - name: Bağımlılıklar
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Testler
+        run: python -m pytest tests/ -q
+
+  # ── Numba hızlandırma yolu ──────────────────────────────────────────────
+  # Ayrı iş, çünkü numba opsiyonel: ana matris onsuz da yeşil kalmalı.
+  # Buradaki amaç JIT çekirdeğinin gerçekten derlenip NumPy ile bit-bit aynı
+  # sonucu verdiğini kanıtlamak — uzun süre hiç koşmamış koddu.
+  numba:
+    name: numba JIT yolu · ubuntu · py3.13
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Bağımlılıklar (+ numba)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest numba
+
+      - name: JIT gerçekten devrede mi
+        run: |
+          python -c "from utils.performance_utils import HAS_NUMBA, ACCELERATION; \
+                     assert HAS_NUMBA, 'numba kurulu ama devreye girmedi'; \
+                     print('hızlandırma:', ACCELERATION)"
+
+      - name: Testler (derlenmiş çekirdekle)
+        run: python -m pytest tests/test_finance_math.py -q
+
+  # ── Uygulama gerçekten ayağa kalkıyor mu ────────────────────────────────
+  # Testler matematiği doğruluyor ama app.py'nin import zamanı hatası (yanlış
+  # Streamlit API'si, eksik modül) hiçbir teste yakalanmıyordu.
+  smoke:
+    name: app.py yüklenebiliyor mu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Bağımlılıklar
+        run: |
+          python -m pip install --upgrade pip
+          sudo apt-get update -qq && sudo apt-get install -y -qq fonts-dejavu-core
+          pip install -r requirements.txt
+
+      - name: Streamlit uygulamasını başlat ve yanıt aldığını doğrula
+        run: |
+          python -m streamlit run app.py --server.headless true --server.port 8501 &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8501/_stcore/health | grep -q ok; then
+              echo "uygulama ayakta"; exit 0
+            fi
+            sleep 2
+          done
+          echo "uygulama 60 sn içinde yanıt vermedi"; exit 1
