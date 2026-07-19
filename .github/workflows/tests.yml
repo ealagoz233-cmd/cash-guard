@@ -44,6 +44,19 @@ jobs:
       - name: Testler
         run: python -m pytest tests/ -q
 
+      # Hangi fontun seçildiği ve ₺ glyph'inin olup olmadığı platforma göre
+      # değişiyor (Windows'ta Arial, Linux'ta DejaVu). Testler her iki durumda
+      # da geçiyor — rapor gerekirse TL'ye düşüyor — ama hangi durumda
+      # olduğumuzu bilmek istiyoruz. Bu adım cevabı loga yazar.
+      - name: PDF font ve para birimi kararı (bilgi)
+        run: |
+          python -c "
+          from modules import report
+          print('font        :', report._FONT)
+          print('₺ glyph var :', report._font_has('₺'))
+          print('secilen sim :', report._usable_symbol('₺'))
+          "
+
   # ── Numba hızlandırma yolu ──────────────────────────────────────────────
   # Ayrı iş, çünkü numba opsiyonel: ana matris onsuz da yeşil kalmalı.
   # Buradaki amaç JIT çekirdeğinin gerçekten derlenip NumPy ile bit-bit aynı
