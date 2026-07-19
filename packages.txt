@@ -1,5 +1,1 @@
-# Streamlit Community Cloud bu dosyadaki apt paketlerini kurar.
-# PDF raporu Türkçe karakterleri (ğ ı ş İ ç ö ü) doğru çizebilsin diye
-# TrueType bir font şart: reportlab font bulamazsa Helvetica'ya düşer ve
-# bu harfler bozulur. modules/report.py DejaVu'yu Linux'ta ilk aday olarak arar.
 fonts-dejavu-core

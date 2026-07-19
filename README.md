@@ -101,6 +101,21 @@ Model adları koda gömülü değil; sağlayıcılar katalog değiştirdiğinde
 
 ---
 
+## Deploy (Streamlit Community Cloud)
+
+Depoyu bağlayıp `app.py`'yi ana dosya olarak seç; gerisi otomatik.
+
+**`packages.txt` neden var:** PDF raporundaki Türkçe karakterler (ğ ı ş İ ç ö ü)
+için TrueType bir font şart. Font bulunamazsa reportlab sessizce Helvetica'ya
+düşer ve bu harfler bozulur — hata vermeden. Dosya `fonts-dejavu-core`
+kuruyor; `modules/report.py` DejaVu'yu Linux'ta ilk aday olarak arar.
+
+> ⚠️ `packages.txt` **yorum satırı kabul etmez.** Streamlit her satırı doğrudan
+> `apt-get`'e paket adı olarak veriyor, yani `#` ile başlayan bir satır kurulumu
+> komple düşürür. Sadece paket adı yaz, satır başına bir tane.
+
+---
+
 ## Kendi verini yükleme biçimleri
 
 Sidebar'daki yükleyici iki biçim kabul eder:
