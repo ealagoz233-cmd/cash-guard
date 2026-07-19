@@ -60,6 +60,36 @@ except Exception:
     _HAS_GEMINI = False
 
 
+def _secret(name: str) -> str | None:
+    """
+    API anahtarını önce ortam değişkenlerinde, sonra Streamlit sırlarında arar.
+
+    Neden iki yer: Streamlit Cloud'da secrets.toml'un YALNIZCA kök seviyedeki
+    anahtarları ortam değişkeni olarak da yayınlanıyor. Kullanıcı anahtarı bir
+    TOML bölümüne ([genel] gibi) koyarsa os.getenv onu göremez ve uygulama
+    sessizce kural tabanlı motorda kalır — "anahtarı ekledim ama değişmedi"
+    şikâyetinin kaynağı budur. st.secrets ise her iki durumu da görür.
+
+    streamlit import'u bilerek fonksiyon içinde: bu modül Streamlit olmadan da
+    çalışabilmeli (testler ve olası bir API sunucusu bunu kullanıyor).
+    """
+    deger = os.getenv(name)
+    if deger:
+        return deger
+    try:
+        import streamlit as st  # noqa: PLC0415 — bilinçli gecikmeli import
+
+        if name in st.secrets:
+            return str(st.secrets[name])
+        # Bölüm içine konmuşsa da bul (bir seviye derinlik yeter).
+        for bolum in st.secrets.values():
+            if hasattr(bolum, "get") and bolum.get(name):
+                return str(bolum[name])
+    except Exception:
+        pass  # streamlit yok ya da sır dosyası tanımlı değil — sorun değil
+    return None
+
+
 SYSTEM_PROMPT = """Sen 20 yıllık, sahada yanmış, duygusuz ve acımasız bir kurumsal CFO'sun.
 Sadece sayılara, nakit akışına ve net kâra bakarsın. Patrona yağ çekmezsin,
 gerçeği yüzüne söylersin. Cümlelerin kısa, net ve aksiyon odaklıdır.
@@ -88,9 +118,9 @@ class RuthlessCFO:
         prefer: "claude" | "openai" | "gemini" | None (otomatik). None ise
         ortamdaki anahtara göre seçilir; hiçbiri yoksa kural tabanlı motor.
         """
-        self.claude_key = os.getenv("ANTHROPIC_API_KEY")
-        self.openai_key = os.getenv("OPENAI_API_KEY")
-        self.gemini_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        self.claude_key = _secret("ANTHROPIC_API_KEY")
+        self.openai_key = _secret("OPENAI_API_KEY")
+        self.gemini_key = _secret("GOOGLE_API_KEY") or _secret("GEMINI_API_KEY")
         self.prefer = prefer
 
     def available_llms(self) -> list[str]:

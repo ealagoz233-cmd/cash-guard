@@ -104,6 +104,20 @@ Rapor kutusundaki "Kaynak" rozeti hangisinin kullanıldığını gösterir.
 Model adları koda gömülü değil; sağlayıcılar katalog değiştirdiğinde
 `CG_CLAUDE_MODEL`, `CG_OPENAI_MODEL`, `CG_GEMINI_MODEL` ile ezebilirsin.
 
+**Streamlit Cloud'da:** uygulama ayarlarındaki **Secrets** kutusuna yaz:
+
+```toml
+ANTHROPIC_API_KEY = "sk-ant-..."
+```
+
+> Anahtarı **kök seviyeye** koy. Streamlit yalnızca kök seviyedeki sırları
+> ortam değişkeni olarak yayınlıyor; `[bolum]` altına koyarsan `os.getenv`
+> göremez. Uygulama her iki durumu da okuyacak şekilde yazıldı, ama başka
+> araçlarla uğraşmamak için kökte tutmak en sağlamı.
+
+Anahtar eklendikten sonra rapor kutusundaki **"Kaynak"** rozeti `Claude`
+yazmalı. Hâlâ `Kural Tabanlı Motor` diyorsa anahtar okunmuyordur.
+
 ---
 
 ## Deploy (Streamlit Community Cloud)

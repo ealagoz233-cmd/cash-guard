@@ -147,6 +147,63 @@ def test_broken_llm_falls_back_to_rule_engine():
         _geri_yukle(onceki)
 
 
+def test_secret_is_found_in_env_and_in_streamlit_secrets():
+    """
+    Anahtar hem ortam değişkeninden hem st.secrets'tan bulunabilmeli.
+
+    Streamlit Cloud, secrets.toml'un YALNIZCA kök seviyesini ortam değişkeni
+    olarak yayınlıyor. Kullanıcı anahtarı bir TOML bölümüne koyarsa os.getenv
+    onu göremez; uygulama sessizce kural tabanlı motorda kalır, kullanıcı ise
+    anahtarı eklediği için LLM'in çalıştığını sanır.
+    """
+    import types
+
+    onceki = _claude_kurulu({"ANTHROPIC_API_KEY": "ortamdan"})
+    try:
+        assert ai_cfo._secret("ANTHROPIC_API_KEY") == "ortamdan"
+    finally:
+        _geri_yukle(onceki)
+
+    onceki = _claude_kurulu({"ANTHROPIC_API_KEY": None})
+    eski_st = sys.modules.get("streamlit")
+    sahte = types.SimpleNamespace()
+    sys.modules["streamlit"] = sahte
+    try:
+        sahte.secrets = {"ANTHROPIC_API_KEY": "kokten"}
+        assert ai_cfo._secret("ANTHROPIC_API_KEY") == "kokten"
+
+        # Bölüm içine konmuş anahtar — os.getenv'in GÖREMEDİĞİ durum
+        sahte.secrets = {"genel": {"ANTHROPIC_API_KEY": "bolumden"}}
+        assert ai_cfo._secret("ANTHROPIC_API_KEY") == "bolumden"
+
+        sahte.secrets = {}
+        assert ai_cfo._secret("ANTHROPIC_API_KEY") is None
+    finally:
+        if eski_st is None:
+            sys.modules.pop("streamlit", None)
+        else:
+            sys.modules["streamlit"] = eski_st
+        _geri_yukle(onceki)
+
+
+def test_secret_lookup_survives_without_streamlit():
+    """
+    Bu modül Streamlit olmadan da çalışabilmeli (testler ve ileride bir API
+    sunucusu için). Sır arama streamlit yokken sessizce None dönmeli.
+    """
+    onceki = _claude_kurulu({"ANTHROPIC_API_KEY": None})
+    eski_st = sys.modules.get("streamlit")
+    sys.modules["streamlit"] = None      # import'u kasten patlat
+    try:
+        assert ai_cfo._secret("ANTHROPIC_API_KEY") is None
+    finally:
+        if eski_st is None:
+            sys.modules.pop("streamlit", None)
+        else:
+            sys.modules["streamlit"] = eski_st
+        _geri_yukle(onceki)
+
+
 def test_no_keys_means_rule_engine():
     """Anahtar yokken LLM listesi boş olmalı — arayüz butonu buna bakıyor."""
     onceki = _claude_kurulu({
