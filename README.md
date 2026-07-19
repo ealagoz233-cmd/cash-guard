@@ -144,6 +144,18 @@ month,revenue,fixed_expense,collections,cash_end
 ...
 ```
 
+### Excel'den çıkan dosyalar
+
+Türkçe Excel CSV'yi **noktalı virgülle** ve **cp1254** kodlamasıyla yazar
+(virgül ondalık ayırıcı olduğu için). Yükleyici bunu kendisi çözer — ayırıcı
+olarak virgül, noktalı virgül veya sekme; kodlama olarak UTF-8 (BOM'lu dahil)
+veya cp1254 kabul edilir.
+
+Sayılar da Türkçe biçimde yazılabilir: `5.000.000`, `5.000.000,50`, `₺1.200`
+hepsi doğru okunur. Bir değer yine de çevrilemezse **sessizce geçilmez** —
+sidebar'da hangi alanların atlandığı uyarı olarak gösterilir, çünkü o alanda
+örnek şirketin rakamı kalır ve fark edilmemesi tehlikelidir.
+
 ---
 
 ## Proje mimarisi

@@ -71,14 +71,83 @@ def normalize_history(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# Türk Excel'i CSV'yi cp1254 kodlamayla ve NOKTALI VİRGÜLLE yazar (virgül
+# ondalık ayırıcı olduğu için). Varsayılan pd.read_csv ikisini de kaçırıyordu:
+# kodlama hatası dosyayı reddediyor, yanlış ayırıcı ise hata bile atmadan
+# tek sütunlu bir tablo üretip sessizce None döndürüyordu.
+_ENCODINGS = ("utf-8-sig", "cp1254", "latin-1")   # sıra önemli: BOM'lu UTF-8 önce
+_SEPARATORS = (",", ";", "\t")
+
+
+def _read_table(file) -> pd.DataFrame:
+    """CSV/Excel'i kodlama ve ayırıcı kombinasyonlarını deneyerek okur."""
+    if file.name.lower().endswith((".xlsx", ".xls")):
+        return pd.read_excel(file)
+
+    son_hata = None
+    for enc in _ENCODINGS:
+        for sep in _SEPARATORS:
+            try:
+                file.seek(0)
+                df = pd.read_csv(file, encoding=enc, sep=sep)
+            except Exception as e:      # noqa: BLE001 — sıradaki kombinasyona geç
+                son_hata = e
+                continue
+            # Ayırıcı doğruysa en az iki sütun çıkar; yanlışsa pandas hata
+            # atmadan her satırı tek sütuna sıkıştırır.
+            if df.shape[1] >= 2:
+                return df
+    if son_hata:
+        raise son_hata
+    raise ValueError(
+        "Sütunlar ayrıştırılamadı. Ayırıcı virgül, noktalı virgül veya sekme olmalı."
+    )
+
+
+def _to_float(value) -> float:
+    """
+    Türkçe biçimli sayıyı float'a çevirir: '₺5.000.000,50' -> 5000000.5
+
+    Eskiden düz float() çağrılıyordu; '5.000.000' gibi bir değer patlıyor,
+    satır sessizce atlanıyor ve o alanda MOCK ŞİRKETİN rakamı ekranda
+    kalıyordu. Kullanıcı kendi verisini yüklediğini sanırken başkasının
+    sayısına bakıyordu — bu uygulamanın uyardığı hatanın ta kendisi.
+    """
+    if isinstance(value, bool):
+        raise ValueError("mantıksal değer sayı değil")
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    s = str(value).strip()
+    for kirpilacak in ("₺", "TL", "tl", "$", "€", "%", " ", " "):
+        s = s.replace(kirpilacak, "")
+    if not s:
+        raise ValueError("boş değer")
+
+    if "," in s and "." in s:
+        # En sağdaki ayırıcı ondalıktır: '1.234,56' (TR) / '1,234.56' (EN)
+        s = (s.replace(".", "").replace(",", ".") if s.rfind(",") > s.rfind(".")
+             else s.replace(",", ""))
+    elif "," in s:
+        s = s.replace(",", ".")                       # TR ondalık: '3,5'
+    elif s.count(".") > 1:
+        s = s.replace(".", "")                        # '5.000.000' binlik
+    elif "." in s:
+        tam, _, kesir = s.rpartition(".")
+        # '5.000' TR'de binliktir, EN'de 5.0 — bu uygulama TR odaklı olduğu
+        # için tam 3 haneli son grup binlik sayılır.
+        if len(kesir) == 3 and tam.lstrip("-+").isdigit():
+            s = s.replace(".", "")
+    return float(s)
+
+
 def parse_uploaded(file) -> dict | None:
     """
     Kullanıcı CSV/Excel'ini esnekçe ayrıştırır.
     Başarısız olursa None döner ve uygulama mock veriye devam eder.
     """
     try:
-        name = file.name.lower()
-        df = pd.read_excel(file) if name.endswith((".xlsx", ".xls")) else pd.read_csv(file)
+        df = _read_table(file)
         df.columns = [str(c).strip().lower() for c in df.columns]
         cols = set(df.columns)
 
@@ -92,12 +161,21 @@ def parse_uploaded(file) -> dict | None:
         if {"alan", "deger"} <= cols or {"field", "value"} <= cols:
             kcol = "alan" if "alan" in cols else "field"
             vcol = "deger" if "deger" in cols else "value"
-            kv = {}
+            kv, atlanan = {}, []
             for k, v in zip(df[kcol], df[vcol]):
+                ad = str(k).strip()
                 try:
-                    kv[str(k).strip()] = float(v)
+                    kv[ad] = _to_float(v)
                 except (TypeError, ValueError):
-                    continue          # sayıya çevrilemeyen satırı sessizce atla
+                    atlanan.append(f"{ad}={v!r}")
+            if atlanan:
+                # Sessiz atlamak tehlikeliydi: o alanda mock şirketin rakamı
+                # kalıyor ve kullanıcı farkı göremiyordu. Artık söylüyoruz.
+                st.sidebar.warning(
+                    "Sayıya çevrilemeyen satırlar atlandı, bu alanlarda örnek "
+                    "veri gösteriliyor: " + ", ".join(atlanan[:5])
+                    + ("…" if len(atlanan) > 5 else "")
+                )
             for key in ("current_cash", "avg_monthly_revenue", "avg_monthly_collections",
                         "avg_monthly_fixed_expense", "existing_debt",
                         "existing_monthly_debt_service"):
@@ -118,6 +196,15 @@ def parse_uploaded(file) -> dict | None:
                 df["collections"].mean() if "collections" in cols else df["revenue"].mean())
             base["history"] = normalize_history(df).to_dict("records")
             return base
+
+        # Buraya düşmek "dosya okundu ama biçimi tanınmadı" demek. Eskiden
+        # sessizce None dönülüyordu: kullanıcı yükleme yapıyor, hiçbir şey
+        # değişmiyor ve hiçbir açıklama görmüyordu.
+        st.sidebar.error(
+            "Dosya okundu ama sütunlar tanınmadı. Biçim A: 'alan,deger'. "
+            f"Biçim B: month, revenue, fixed_expense… Bulunan sütunlar: "
+            f"{', '.join(sorted(cols))[:120]}"
+        )
     except Exception as e:  # noqa: BLE001
         st.sidebar.error(f"Dosya okunamadı: {e}")
     return None

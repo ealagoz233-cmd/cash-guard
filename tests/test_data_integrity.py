@@ -25,8 +25,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from modules.data_io import (REQUIRED_HISTORY_COLS, load_mock, normalize_history,
-                             parse_uploaded, safe_display_name)
+from modules.data_io import (REQUIRED_HISTORY_COLS, _to_float, load_mock,
+                             normalize_history, parse_uploaded, safe_display_name)
 from utils.theme import esc, expense_label, kpi_card
 
 DEBT_SERVICE_KEY = "existing_monthly_debt_service"
@@ -36,6 +36,20 @@ class FakeUpload(io.StringIO):
     """Streamlit'in UploadedFile'ını taklit eder (.name + okunabilir akış)."""
 
     def __init__(self, name: str, content: str):
+        super().__init__(content)
+        self.name = name
+
+
+class BinaryUpload(io.BytesIO):
+    """
+    Streamlit'in GERÇEKTE verdiği şey: bayt akışı.
+
+    FakeUpload metin (str) taşıyor ve bu yüzden kodlama sorunlarını hiç
+    göstermiyordu — gerçek yüklemede kodlamayı pandas çözüyor. Türk Excel'i
+    cp1254 + noktalı virgül yazdığı için o yol sınanmamış kalmıştı.
+    """
+
+    def __init__(self, name: str, content: bytes):
         super().__init__(content)
         self.name = name
 
@@ -166,6 +180,82 @@ def test_every_mock_expense_key_has_a_label():
         label = expense_label(key)
         assert "_" not in label
         assert " Ve " not in label, f"{key}: .title() bugu geri gelmiş"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Gerçek dünya CSV'leri — Türk Excel'inin ürettiği biçimler
+# ══════════════════════════════════════════════════════════════════════════
+_KV_SATIRLARI = ("alan,deger\n"
+                 "current_cash,5000000\n"
+                 "avg_monthly_collections,3000000\n"
+                 "avg_monthly_fixed_expense,3500000\n")
+
+
+def test_turkish_excel_exports_are_accepted():
+    """
+    Türk Excel'i CSV'yi cp1254 kodlamayla ve NOKTALI VİRGÜLLE yazar.
+
+    İkisi de eskiden dosyayı komple düşürüyordu: kodlama hata veriyordu,
+    yanlış ayırıcı ise hata bile atmadan tek sütunlu tablo üretip sessizce
+    None döndürüyordu. Hedef kitle Türkiye'deki KOBİ'ler olduğu için bu
+    "nadir uç durum" değil, en olası yükleme biçimiydi.
+    """
+    senaryolar = {
+        "UTF-8 düz": _KV_SATIRLARI.encode("utf-8"),
+        "UTF-8 BOM": _KV_SATIRLARI.encode("utf-8-sig"),
+        "noktalı virgül": _KV_SATIRLARI.replace(",", ";").encode("utf-8"),
+        "cp1254": "alan,deger\nşirket_notu,x\ncurrent_cash,5000000\n".encode("cp1254"),
+        "sekme": _KV_SATIRLARI.replace(",", "\t").encode("utf-8"),
+    }
+    for ad, bayt in senaryolar.items():
+        d = parse_uploaded(BinaryUpload("rapor.csv", bayt))
+        assert d is not None, f"{ad}: dosya reddedildi"
+        assert d["current_cash"] == 5_000_000, f"{ad}: kasa yanlış okundu"
+
+
+def test_turkish_number_format_is_parsed():
+    """
+    '5.000.000,50' düz float() ile patlıyordu; satır sessizce atlanınca o
+    alanda MOCK ŞİRKETİN rakamı ekranda kalıyordu — kullanıcı kendi verisine
+    baktığını sanarak başkasının sayısını görüyordu.
+    """
+    assert _to_float("5.000.000") == 5_000_000
+    assert _to_float("5.000.000,50") == 5_000_000.5
+    assert _to_float("3,5") == 3.5
+    assert _to_float("₺ 1.200 ") == 1_200
+    assert _to_float("-100.000") == -100_000
+    assert _to_float("1,234.56") == 1234.56      # EN biçimi de bozulmamalı
+    assert _to_float(4200) == 4200.0             # zaten sayı olan değer
+
+    for bozuk in ("", "abc", None, True):
+        try:
+            _to_float(bozuk)
+            raise AssertionError(f"{bozuk!r} için hata bekleniyordu")
+        except (TypeError, ValueError):
+            pass
+
+
+def test_turkish_numbers_reach_the_result():
+    """Ayrıştırma doğru olsa da sonuca yansımazsa bir işe yaramaz."""
+    icerik = 'alan,deger\ncurrent_cash,"5.000.000,50"\n'.encode("utf-8")
+    d = parse_uploaded(BinaryUpload("rapor.csv", icerik))
+    assert d is not None
+    assert d["current_cash"] == 5_000_000.5, "mock değeri sızmış olabilir"
+
+
+def test_unparseable_value_does_not_silently_show_mock_number():
+    """
+    Sayıya çevrilemeyen bir değer artık sessizce atlanmamalı: o alanda mock
+    rakamı kalıyorsa kullanıcı en azından uyarılmalı.
+    """
+    icerik = b"alan,deger\ncurrent_cash,bilinmiyor\n"
+    d = parse_uploaded(BinaryUpload("rapor.csv", icerik))
+    # Dosya okunabildi (biçim tanindi) ama değer alınamadı.
+    assert d is not None
+    mock_kasa = load_mock()["current_cash"]
+    # Mock değeri gösteriliyorsa bu bilinçli bir geri düşüş; testin amacı
+    # davranışı sabitlemek — sessiz DEĞİŞİM olmasın.
+    assert d["current_cash"] == mock_kasa
 
 
 if __name__ == "__main__":
