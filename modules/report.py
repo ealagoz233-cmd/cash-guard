@@ -91,10 +91,27 @@ def _money(value, sym: str = "TL") -> str:
     return f"{'-' if value < 0 else ''}{sym} {s}"
 
 
+def _esc(value) -> str:
+    """
+    reportlab'ın Paragraph'ı mini bir XML ayrıştırıcısıdır: <b>, <i>, <font>
+    gibi etiketleri yorumlar. Kaçırılmamış bir '<' iyi ihtimalle bozuk çıktı,
+    kötü ihtimalle ValueError demek — nitekim şirket adında kapanmamış bir
+    <b> varken PDF üretimi tamamen çöküyordu.
+
+    Bu yüzden Paragraph'a giren HER dış kaynaklı metin buradan geçmeli:
+    şirket adı, sektör, veri tarihi, CFO motorunun adı. Hepsi yüklenen
+    dosyadan ya da LLM'den geliyor; hiçbiri güvenilir değil.
+    """
+    return (str(value).replace("&", "&amp;")
+                      .replace("<", "&lt;")
+                      .replace(">", "&gt;"))
+
+
 def _md_to_rl(text: str) -> str:
     """**kalın** -> <b>kalın</b>; XML özel karakterlerini kaçır."""
-    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    # Sıra önemli: önce kaçır, SONRA kendi etiketimizi ekle. Tersi olsaydı
+    # az önce ürettiğimiz <b>'yi de kaçırırdık.
+    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", _esc(text))
 
 
 def _styles():
@@ -167,10 +184,10 @@ def build_report(ctx: dict) -> bytes:
     story.append(Paragraph("Kurumsal Nakit Hayatta Kalma &amp; Kredi Stres Testi Raporu",
                            S["sub"]))
     story.append(Spacer(1, 4))
-    meta = f"{ctx.get('company_name','—')}"
+    meta = _esc(ctx.get("company_name", "—"))
     if ctx.get("sector"):
-        meta += f"  ·  {ctx['sector']}"
-    meta += f"  ·  Veri tarihi: {ctx.get('as_of','—')}"
+        meta += f"  ·  {_esc(ctx['sector'])}"
+    meta += f"  ·  Veri tarihi: {_esc(ctx.get('as_of', '—'))}"
     story.append(Paragraph(meta, S["sub"]))
     story.append(Spacer(1, 6))
     story.append(HRFlowable(width="100%", thickness=1.2, color=GUARDIAN))
@@ -245,8 +262,9 @@ def build_report(ctx: dict) -> bytes:
                 "aldanmayın.", S["body"]))
 
     # ── CFO aksiyon planı ─────────────────────────────────────────────────
-    story.append(Paragraph(f"4 · Acımasız CFO — Aksiyon Planı  ({ctx.get('cfo_source','')})",
-                           S["h2"]))
+    story.append(Paragraph(
+        f"4 · Acımasız CFO — Aksiyon Planı  ({_esc(ctx.get('cfo_source', ''))})",
+        S["h2"]))
     for block in (ctx.get("cfo_text", "") or "").split("\n"):
         block = block.strip()
         if not block:

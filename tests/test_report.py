@@ -97,6 +97,38 @@ def test_report_survives_missing_optional_fields():
     assert data[:5] == b"%PDF-"
 
 
+def test_markup_in_text_fields_does_not_break_pdf():
+    """
+    reportlab'ın Paragraph'ı mini-XML ayrıştırıcıdır: kaçırılmamış bir '<'
+    ya bozuk çıktı ya ValueError demek.
+
+    Gerçek senaryo: kullanıcı şirket adı 'Acme <b>Tekstil' olan bir CSV
+    yükler, "Rapor indir"e basar ve uygulama çöker. Bu test o çökmeyi
+    yeniden üretmek için yazıldı — düzeltmeden önce kapanmamış etiket
+    ValueError atıyordu.
+    """
+    tuzaklar = [
+        "Acme <b>Tekstil A.Ş.",           # kapanmamış etiket — eskiden ValueError
+        "Acme </b> Ortakları",            # eşleşmeyen kapanış
+        "Acme <script>alert(1)</script>",
+        "Acme < Ortakları > Ltd.",        # ham karşılaştırma işaretleri
+        "Acme & Co <font size=99>",
+    ]
+    for ad in tuzaklar:
+        for alan in ("company_name", "sector", "as_of", "cfo_source"):
+            ctx = _ctx()
+            ctx[alan] = ad
+            data = report.build_report(ctx)
+            assert data[:5] == b"%PDF-", f"{alan}={ad!r} PDF üretimini bozdu"
+
+
+def test_markup_in_cfo_text_does_not_break_pdf():
+    """CFO metni LLM'den geliyor; içindeki etiket PDF'i patlatmamalı."""
+    ctx = _ctx()
+    ctx["cfo_text"] = "Kasa eriyor.\n1. <b>Kapanmamış kalın.\n2. <img src=x> ve & işareti."
+    assert report.build_report(ctx)[:5] == b"%PDF-"
+
+
 def test_currency_symbol_falls_back_to_TL():
     """₺ glyph'i her fontta yok; rapor onu TL'ye çevirip riski kesiyor."""
     ctx = _ctx()
