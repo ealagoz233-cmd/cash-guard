@@ -17,6 +17,13 @@ reportlab>=4.0     # yönetim kuruluna sunulacak PDF rapor üretimi
 # openai>=1.30
 # google-generativeai>=0.7
 
+# ── Opsiyonel: Test ───────────────────────────────────────────────────────
+# Testler pytest OLMADAN da koşar (her dosyada __main__ bloğu var):
+#   python tests/test_finance_math.py
+# Toplu ve renkli çıktı isteyen için:
+#   pip install pytest && python -m pytest tests/ -q
+# pytest>=8.0
+
 # ── Opsiyonel: Performans hızlandırma ─────────────────────────────────────
 # Monte Carlo çekirdeği saf NumPy ile vektörize edilmiştir ve numba OLMADAN
 # da hızlıdır. numba kuruluysa sıcak döngü JIT ile derlenir. Python 3.14'te
