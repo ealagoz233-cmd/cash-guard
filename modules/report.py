@@ -107,6 +107,41 @@ def _esc(value) -> str:
                       .replace(">", "&gt;"))
 
 
+def _font_has(char: str) -> bool:
+    """Kayıtlı fontun bu karakter için gerçekten bir glyph'i var mı?"""
+    try:
+        face = pdfmetrics.getFont(_FONT).face
+        return ord(char) in face.charToGlyph
+    except Exception:
+        # Helvetica gibi gömülü Type1 fontlarda charToGlyph yok. Bu durumda
+        # zaten Türkçe de bozuk demektir; güvenli tarafta kal.
+        return False
+
+
+def _usable_symbol(sym: str) -> str:
+    """
+    Para birimi simgesini fonta SORARAK seçer.
+
+    Eskiden '₺' koşulsuz 'TL'ye çevriliyordu ("glyph riski" gerekçesiyle).
+    Sonuç: tablolarda TL, CFO metninde ₺ yazıyordu — aynı raporda iki farklı
+    gösterim. Oysa risk ölçülebilir bir şey: fontta glyph varsa ₺ kullan,
+    yoksa TL'ye düş. Karar tek yerde verilir ve CFO metnine de uygulanır,
+    böylece belge her koşulda kendi içinde tutarlı kalır.
+    """
+    return sym if (sym != "₺" or _font_has("₺")) else "TL"
+
+
+def _align_currency(text: str, sym: str) -> str:
+    """
+    CFO metnindeki para simgesini raporun kullandığı simgeye hizalar.
+
+    CFO metni PDF'ten ÖNCE üretiliyor ve raporun hangi simgeyi seçeceğini
+    bilmiyor. Rapor ₺'yi TL'ye düşürdüyse metin de düşmeli; yoksa tablolarda
+    TL, aksiyon planında ₺ yazar — gerçek çıktıda görülen kusur buydu.
+    """
+    return text if sym == "₺" else text.replace("₺", sym)
+
+
 def _md_to_rl(text: str) -> str:
     """**kalın** -> <b>kalın</b>; XML özel karakterlerini kaçır."""
     # Sıra önemli: önce kaçır, SONRA kendi etiketimizi ekle. Tersi olsaydı
@@ -167,9 +202,7 @@ def build_report(ctx: dict) -> bytes:
         default_with_loan, base_ruin_pct, loan_ruin_pct (None olabilir),
         cfo_text, cfo_source
     """
-    sym = ctx.get("currency_symbol", "TL")
-    if sym == "₺":  # PDF fontunda glyph riski; güvenli tarafta kal
-        sym = "TL"
+    sym = _usable_symbol(ctx.get("currency_symbol", "TL"))
     S = _styles()
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -265,7 +298,7 @@ def build_report(ctx: dict) -> bytes:
     story.append(Paragraph(
         f"4 · Acımasız CFO — Aksiyon Planı  ({_esc(ctx.get('cfo_source', ''))})",
         S["h2"]))
-    for block in (ctx.get("cfo_text", "") or "").split("\n"):
+    for block in _align_currency(ctx.get("cfo_text", "") or "", sym).split("\n"):
         block = block.strip()
         if not block:
             continue

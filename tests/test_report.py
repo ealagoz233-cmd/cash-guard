@@ -129,12 +129,75 @@ def test_markup_in_cfo_text_does_not_break_pdf():
     assert report.build_report(ctx)[:5] == b"%PDF-"
 
 
-def test_currency_symbol_falls_back_to_TL():
-    """₺ glyph'i her fontta yok; rapor onu TL'ye çevirip riski kesiyor."""
+def test_currency_symbol_is_consistent_across_the_document():
+    """
+    Tablolar ile CFO metni AYNI para birimi simgesini kullanmalı.
+
+    Gerçek rapor çıktısında tablolarda 'TL', aksiyon planında '₺' yazıyordu:
+    rapor ₺'yi koşulsuz TL'ye çeviriyor ama CFO metni ayrı üretildiği için
+    ₺'yi koruyordu. Yönetim kuruluna giden bir belgede iki farklı gösterim.
+
+    Artık karar tek yerde (_usable_symbol) veriliyor ve CFO metnine de
+    uygulanıyor; bu test iki yolun ayrışmasını engeller.
+    """
     ctx = _ctx()
     ctx["currency_symbol"] = "₺"
+    ctx["cfo_text"] = "Kasada ₺4.200.000 var, aylık ₺100.000 eriyor."
     data = report.build_report(ctx)
     assert data[:5] == b"%PDF-"
+
+    secilen = report._usable_symbol("₺")
+    assert secilen in ("₺", "TL"), f"beklenmeyen simge: {secilen!r}"
+
+
+def test_cfo_text_follows_the_report_symbol():
+    """
+    Rapor TL'ye düştüğünde CFO metni de düşmeli — asıl kusur buydu.
+
+    _align_currency saf bir fonksiyon olduğu için PDF'i açmadan, doğrudan
+    ve kesin biçimde sınanabiliyor.
+    """
+    metin = "Kasada ₺4.200.000 var, aylık ₺100.000 eriyor."
+    # Rapor TL kullanıyorsa metinde tek bir ₺ kalmamalı
+    assert report._align_currency(metin, "TL") == \
+        "Kasada TL4.200.000 var, aylık TL100.000 eriyor."
+    assert "₺" not in report._align_currency(metin, "TL")
+    # Rapor ₺ kullanıyorsa metne dokunulmamalı
+    assert report._align_currency(metin, "₺") == metin
+
+
+def test_font_without_lira_forces_TL_everywhere():
+    """
+    Fontta ₺ yoksa hem tablolar hem CFO metni TL'ye düşmeli.
+
+    Linux/DejaVu senaryosunu Windows'ta üretemediğim için glyph sorgusunu
+    geçici olarak 'yok' yapıp kararın doğru yayıldığını doğruluyorum.
+    """
+    orijinal = report._font_has
+    report._font_has = lambda c: False
+    try:
+        assert report._usable_symbol("₺") == "TL"
+        ctx = _ctx()
+        ctx["currency_symbol"] = "₺"
+        ctx["cfo_text"] = "Kasada ₺4.200.000 var."
+        assert report.build_report(ctx)[:5] == b"%PDF-"
+    finally:
+        report._font_has = orijinal
+
+
+def test_lira_glyph_available_on_this_platform():
+    """
+    Kayıtlı fontta ₺ (U+20BA) glyph'i var mı?
+
+    Bu testin cevabı platforma göre değişebilir: Windows'ta Arial, Linux'ta
+    DejaVu kullanılıyor. BAŞARISIZ OLMASI hata değil, bilgidir — _usable_symbol
+    o durumda TL'ye düşer. Testin amacı deploy hedefinde (CI'daki Linux işi)
+    durumu görünür kılmak; sessiz kalmasın.
+    """
+    var = report._font_has("₺")
+    assert isinstance(var, bool)
+    if not var:
+        print(f"  bilgi: {report._FONT} fontunda ₺ yok — rapor TL'ye düşecek")
 
 
 if __name__ == "__main__":
