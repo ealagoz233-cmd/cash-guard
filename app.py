@@ -27,6 +27,7 @@ import streamlit as st
 
 from modules import loan_simulator as ls
 from modules import monte_carlo as mc
+from modules import scenario
 from modules.ai_cfo import RuthlessCFO
 from modules.data_io import REQUIRED_HISTORY_COLS, load_mock, parse_uploaded
 from modules.report import build_report
@@ -109,25 +110,55 @@ st.sidebar.markdown(
 # ── Sidebar: kredi senaryosu sürgüleri ────────────────────────────────────
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 💳 Yeni Kredi Senaryosu")
+# Senaryo adres çubuğundan okunur: paylaşılan bir link AYNI analizi açar.
+# Bozuk/aralık dışı parametreler scenario.py içinde kırpıldığı için burada
+# güvenle kullanılabilir (bkz. tests/test_scenario.py).
+senaryo = scenario.from_query_params(st.query_params)
+
 loan_amount = st.sidebar.slider(
     f"Kredi Miktarı ({sym})", 0, 30_000_000,
-    value=10_000_000, step=500_000, format="%d")
-loan_term = st.sidebar.slider("Vade (ay)", 6, 60, value=24, step=3)
-interest = st.sidebar.slider("Aylık Faiz Oranı (%)", 0.0, 8.0, value=3.5, step=0.1) / 100.0
+    value=senaryo["kredi"], step=500_000, format="%d")
+loan_term = st.sidebar.slider("Vade (ay)", 6, 60, value=senaryo["vade"], step=3)
+interest = st.sidebar.slider(
+    "Aylık Faiz Oranı (%)", 0.0, 8.0, value=senaryo["faiz"], step=0.1) / 100.0
 
 # ── Sidebar: stres değişkenleri ───────────────────────────────────────────
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🌪️ Stres Değişkenleri")
-income_drop = st.sidebar.slider("Beklenen Gelir Düşüşü (%)", 0, 40, value=6) / 100.0
-delay_prob = st.sidebar.slider("Tahsilat Gecikme Olasılığı (%)", 0, 80, value=30) / 100.0
-delay_sev = st.sidebar.slider("Geciken Ayda Kayan Tahsilat (%)", 0, 80, value=25) / 100.0
-exp_infl = st.sidebar.slider("Gider Artış Oranı (%)", 0, 40, value=10) / 100.0
-volatility = st.sidebar.slider("Piyasa Oynaklığı (%)", 5, 40, value=10) / 100.0
+income_drop = st.sidebar.slider(
+    "Beklenen Gelir Düşüşü (%)", 0, 40, value=senaryo["gelirdus"]) / 100.0
+delay_prob = st.sidebar.slider(
+    "Tahsilat Gecikme Olasılığı (%)", 0, 80, value=senaryo["gecikme"]) / 100.0
+delay_sev = st.sidebar.slider(
+    "Geciken Ayda Kayan Tahsilat (%)", 0, 80, value=senaryo["kayan"]) / 100.0
+exp_infl = st.sidebar.slider(
+    "Gider Artış Oranı (%)", 0, 40, value=senaryo["giderart"]) / 100.0
+volatility = st.sidebar.slider(
+    "Piyasa Oynaklığı (%)", 5, 40, value=senaryo["oynaklik"]) / 100.0
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### ⚙️ Simülasyon")
 n_iter = st.sidebar.select_slider(
-    "İterasyon Sayısı", options=[10_000, 20_000, 30_000, 50_000], value=10_000)
+    "İterasyon Sayısı", options=[10_000, 20_000, 30_000, 50_000],
+    value=senaryo["iterasyon"])
+
+# Sürgülerin GÜNCEL hali adres çubuğuna yazılır; kullanıcı linki kopyalayıp
+# paylaşabilir. Yalnızca fark varsa yazıyoruz: query_params'a her koşuda
+# yazmak gereksiz yeniden çalıştırma tetikleyebiliyor.
+_guncel = {
+    "kredi": loan_amount, "vade": loan_term, "faiz": round(interest * 100, 1),
+    "gelirdus": round(income_drop * 100), "gecikme": round(delay_prob * 100),
+    "kayan": round(delay_sev * 100), "giderart": round(exp_infl * 100),
+    "oynaklik": round(volatility * 100), "iterasyon": n_iter,
+}
+if not scenario.ayni_mi(_guncel, st.query_params):
+    st.query_params.clear()
+    st.query_params.update(scenario.to_query_params(_guncel))
+
+st.sidebar.caption(
+    "🔗 Ayarladığın senaryo adres çubuğunda taşınıyor — linki kopyalayıp "
+    "paylaşırsan karşı taraf aynı analizi açar. Sunucuda hiçbir şey saklanmaz."
+)
 
 # ── Çekirdek skaler değerler ──────────────────────────────────────────────
 # ÖNEMLİ: Nakit modeli "faturalanan gelir"i değil, fiilen TAHSİL EDİLEN nakdi
