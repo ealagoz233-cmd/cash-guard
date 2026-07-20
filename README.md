@@ -9,6 +9,13 @@
 Kurulum gerekmez — örnek şirket verisiyle açılır, sürgüleri oynatıp kredi
 senaryosunu kendin sınayabilir, Türkçe PDF raporu indirebilirsin.
 
+### 🔌 [Canlı API: cash-guard-api.onrender.com/docs](https://cash-guard-api.onrender.com/docs)
+
+Aynı motor HTTP üzerinden de açık. Uçları tarayıcıdan deneyebilirsin:
+[`/health`](https://cash-guard-api.onrender.com/health) ·
+`/simulate` · `/loan` · `/advise`
+*(ücretsiz katman: servis uykudaysa ilk istek ~30 sn sürer)*
+
 **Kurumsal Nakit Hayatta Kalma & Kredi Stres Testi Motoru**
 
 Şirketler kârsızlıktan değil, **nakitsizlikten ve yanlış borçlanmadan** batar.
@@ -160,11 +167,14 @@ yeniden başlatmada veriyi kaybetmek, hiç kaydetmemekten kötüdür.
 
 ---
 
-## HTTP API (opsiyonel)
+## HTTP API
+
+**Canlı:** <https://cash-guard-api.onrender.com/docs>
 
 Streamlit arayüzü motorun **bir** tüketicisi; aynı motor HTTP üzerinden de
 kullanılabilir. Hesap mantığı kopyalanmaz — her iki yol da `modules/` altındaki
 aynı kodu çağırır, böylece iki arayüz aynı şirket için farklı sayı gösteremez.
+(`tests/test_api.py` bunu ölçüyor: aynı girdi, aynı çıktı.)
 
 ```bash
 pip install -r requirements-api.txt
