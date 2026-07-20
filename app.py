@@ -59,7 +59,7 @@ def get_cfo_advice(ctx_json: str) -> dict:
     """CFO tavsiyesini bağlam JSON'una göre önbelleğe alır (LLM çağrısını az tutar)."""
     ctx = json.loads(ctx_json)
     advice = RuthlessCFO().advise(ctx)
-    return {"text": advice.text, "source": advice.source}
+    return {"text": advice.text, "source": advice.source, "reason": advice.reason}
 
 
 @st.cache_data(show_spinner=False)
@@ -751,6 +751,12 @@ cols.markdown(
        '<span class="cg-badge">Deterministik — aynı sayılar, aynı plan</span>'),
     unsafe_allow_html=True,
 )
+
+# Gerçek LLM beklenip yerel motora düşüldüyse sebebini göster. Sessiz fallback,
+# anahtarı ekleyen kişiyi karanlıkta bırakıyordu: "olmadı" görünüyor ama paket
+# mi, anahtar mı, çağrı mı sorunlu belli olmuyordu.
+if advice.get("reason"):
+    cols.caption(f"⚠️ Gerçek LLM devrede değil — {advice['reason']}")
 
 # Markdown'ı CFO kutusunda göster (** -> <b>, satır sonları -> <br>)
 st.markdown(f'<div class="cg-cfo">{md_to_html(advice["text"])}</div>', unsafe_allow_html=True)

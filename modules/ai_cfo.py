@@ -19,6 +19,7 @@ Dışa açılan tek şey: RuthlessCFO sınıfı ve .advise(context) metodu.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 from utils.theme import expense_label, money
@@ -103,11 +104,24 @@ olasılığı verilecek. Görevin:
 Türkçe yaz. Abartılı nezaket yok. 'Bence' gibi zayıf ifadeler kullanma."""
 
 
+def _anahtari_gizle(metin: str) -> str:
+    """
+    Hata mesajını göstermeden önce içindeki olası anahtarı sil. Mesaj arayüze
+    çıkıyor; sağlayıcı bir gün isteği hata metnine koyarsa anahtar ekrana
+    düşmesin.
+    """
+    return re.sub(r"(sk-[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,})", "«gizlendi»", metin)
+
+
 @dataclass
 class CFOAdvice:
     """CFO çıktısını taşıyan basit kap."""
     text: str            # markdown metin (teşhis + aksiyon planı)
     source: str          # "Claude", "OpenAI", "Gemini" veya "Kural Tabanlı Motor"
+    # Kural tabanlı motora DÜŞÜLDÜYSE sebebi. Sessiz fallback en can sıkıcı
+    # hata sınıfı: anahtarı ekleyen kişi "olmadı" görür ama nedenini göremez,
+    # logda da iz kalmaz. Bu alan o körlüğü kapatır. LLM çalıştıysa None.
+    reason: str | None = None
 
 
 class RuthlessCFO:
@@ -156,14 +170,44 @@ class RuthlessCFO:
         askers = {"claude": (self._ask_claude, "Claude"),
                   "openai": (self._ask_openai, "OpenAI"),
                   "gemini": (self._ask_gemini, "Gemini")}
+        hatalar = []
         for engine in self.available_llms():
             ask, label = askers[engine]
             try:
                 return CFOAdvice(ask(ctx), label)
-            except Exception:
+            except Exception as e:
+                hatalar.append(f"{label}: {type(e).__name__}: {e}")
                 continue
         # Her koşulda çalışan güvenli liman:
-        return CFOAdvice(self._rule_based(ctx), "Kural Tabanlı Motor")
+        return CFOAdvice(self._rule_based(ctx), "Kural Tabanlı Motor",
+                         self.neden_yerel_motor(hatalar))
+
+    def neden_yerel_motor(self, hatalar: list[str] | None = None) -> str | None:
+        """
+        Kural tabanlı motora neden düşüldüğü — tek cümle, anahtarsız.
+
+        HİÇBİR anahtar tanımlı değilse None döner. Sebebi: anahtarsız kurulum
+        bir arıza değil, demonun BİLİNÇLİ varsayılanı. Orada uyarı göstermek
+        halka açık demoyu bozukmuş gibi gösterirdi.
+
+        Anahtar varsa kullanıcı gerçekten LLM istemiştir; o zaman sessiz kalmak
+        zarar verir. Üç durum dışarıdan aynı görünür, çözümleri farklıdır:
+        paket yok (requirements), çağrı patladı (geçersiz anahtar / kota / ağ),
+        anahtar başka sağlayıcıya ait.
+        """
+        anahtar_var = bool(self.claude_key or self.openai_key or self.gemini_key)
+        if not anahtar_var:
+            return None
+
+        if hatalar:
+            return _anahtari_gizle("çağrı başarısız — " + "; ".join(hatalar))
+        if self.claude_key and not _HAS_CLAUDE:
+            return "ANTHROPIC_API_KEY tanımlı ama anthropic paketi kurulu değil."
+        if self.openai_key and not _HAS_OPENAI:
+            return "OPENAI_API_KEY tanımlı ama openai paketi kurulu değil."
+        if self.gemini_key and not _HAS_GEMINI:
+            return "GOOGLE_API_KEY tanımlı ama google-generativeai kurulu değil."
+        return "Anahtar okundu ama hiçbir sağlayıcı kullanılabilir değil."
 
     # ── Gerçek LLM yolları ────────────────────────────────────────────────
     def _user_payload(self, ctx: dict) -> str:

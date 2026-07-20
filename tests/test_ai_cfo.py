@@ -218,6 +218,55 @@ def test_no_keys_means_rule_engine():
         _geri_yukle(onceki)
 
 
+_ANAHTARSIZ = {"ANTHROPIC_API_KEY": None, "OPENAI_API_KEY": None,
+               "GOOGLE_API_KEY": None, "GEMINI_API_KEY": None}
+
+
+def test_anahtarsiz_kurulum_uyari_gostermez():
+    """
+    Anahtarsız çalışmak bir arıza DEĞİL, halka açık demonun bilinçli
+    varsayılanı. Orada uyarı göstermek demoyu bozukmuş gibi gösterirdi —
+    bu yüzden sebep None olmalı.
+    """
+    onceki = _claude_kurulu(dict(_ANAHTARSIZ))
+    try:
+        sonuc = RuthlessCFO().advise(_ctx())
+        assert sonuc.source == "Kural Tabanlı Motor"
+        assert sonuc.reason is None, f"anahtarsız kurulumda uyarı çıktı: {sonuc.reason}"
+    finally:
+        _geri_yukle(onceki)
+
+
+def test_anahtar_varken_sessiz_kalmaz():
+    """
+    Anahtar tanımlıysa kullanıcı gerçekten LLM istemiştir. Sessizce yerel
+    motora düşmek onu karanlıkta bırakır: paket mi, anahtar mı, çağrı mı
+    sorunlu — hiçbiri görünmezdi. Sebep, çözümü işaret etmeli.
+    """
+    onceki = _claude_kurulu(dict(_ANAHTARSIZ, ANTHROPIC_API_KEY="test-anahtar"))
+    eski = ai_cfo._HAS_CLAUDE
+    ai_cfo._HAS_CLAUDE = False        # paket yokmuş gibi
+    try:
+        sebep = RuthlessCFO().advise(_ctx()).reason
+        assert sebep, "anahtar varken sebep verilmedi"
+        assert "paket" in sebep, f"sebep çözümü işaret etmiyor: {sebep}"
+    finally:
+        ai_cfo._HAS_CLAUDE = eski
+        _geri_yukle(onceki)
+
+
+def test_sebep_metni_anahtari_sizdirmaz():
+    """
+    Sebep arayüze çıkıyor. Sağlayıcı bir gün anahtarı hata metnine koyarsa
+    ekrana düşmemeli — sızıntı, bozuk özellikten çok daha pahalıdır.
+    """
+    kirli = "401 hata: sk-ant-api03-COKGIZLI-ANAHTAR gecersiz, AIzaSyABCDEFGHIJK de"
+    temiz = ai_cfo._anahtari_gizle(kirli)
+    assert "sk-ant-api03-COKGIZLI-ANAHTAR" not in temiz
+    assert "AIzaSyABCDEFGHIJK" not in temiz
+    assert "401 hata" in temiz, "mesajın tamamı silinmiş, teşhis kalmamış"
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):
