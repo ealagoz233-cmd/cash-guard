@@ -246,27 +246,77 @@ sidebar'da hangi alanların atlandığı uyarı olarak gösterilir, çünkü o a
 
 ## Proje mimarisi
 
+Tek bir hesap motoru, üç ayrı tüketici. Mantık hiçbir yerde kopyalanmaz —
+kopyalanan mantık er geç ayrışır ve iki arayüz aynı şirket için farklı sayı
+gösterir. `test_api_and_engine_agree` bunu bekçilikle korur.
+
+```mermaid
+flowchart LR
+    subgraph T["Tüketiciler"]
+        UI["Streamlit arayüzü<br/>app.py"]
+        API["HTTP API<br/>api.py"]
+        PDF["PDF raporu<br/>report.py"]
+    end
+
+    subgraph M["Motor — modules/"]
+        LOAN["loan_simulator<br/>kredi projeksiyonu"]
+        MC["monte_carlo<br/>10.000 senaryo"]
+        RW["runway<br/>statik + trend"]
+        CFO["ai_cfo<br/>LLM / kural tabanlı"]
+    end
+
+    subgraph D["Durum ve veri"]
+        IO["data_io<br/>CSV / Excel"]
+        STORE["store<br/>senaryo defteri"]
+        SCN["scenario<br/>URL'de durum"]
+    end
+
+    UI --> LOAN & MC & RW & CFO
+    UI --> IO & STORE & SCN
+    API --> LOAN & MC & RW & CFO
+    UI --> PDF
+    IO --> RW
+
+    CFO -.->|anahtar yoksa| RULE["kural tabanlı motor<br/>her koşulda cevap"]
+```
+
+Arayüz bağımlılığı motora sızmaz: `utils/theme.py` streamlit'e bağlıdır ve
+motordan çağrılmaz; ortak biçimlendirme `utils/format.py`'dedir. Bu sayede API
+dağıtımı arayüz yığınını kurmak zorunda kalmaz (testle korunur).
+
 ```
 cash-guard/
 ├── app.py                       # Ana Streamlit arayüzü (dashboard)
+├── api.py                       # HTTP API (FastAPI) — motorun ikinci tüketicisi
+├── render.yaml                  # Render Blueprint: API'yi tek tıkla yayına al
 ├── modules/
 │   ├── loan_simulator.py        # Modül 1: deterministik kredi/borç projeksiyonu
 │   ├── monte_carlo.py           # Modül 2: 10.000+ iterasyon stres testi
 │   ├── ai_cfo.py                # Modül 3: LLM + kural tabanlı CFO ajanı
 │   ├── runway.py                # Nakit ömrü: statik + trend (Theil–Sen) hesabı
 │   ├── data_io.py               # Veri yükleme ve kullanıcı CSV/Excel ayrıştırma
+│   ├── store.py                 # Senaryo defteri: kaydet/karşılaştır/dışa aktar
+│   ├── scenario.py              # Durumu URL'de taşıma (paylaşılabilir link)
 │   └── report.py                # Yönetim kurulu PDF raporu (reportlab)
 ├── utils/
+│   ├── format.py                # Arayüzden bağımsız biçimlendirme (motor kullanır)
 │   ├── theme.py                 # "War-room" karanlık tema, KPI kartları, CSS
 │   └── performance_utils.py     # Numba/NumPy nakit yolu çekirdeği
-├── tests/
+├── tests/                       # 107 test, 9 dosya
 │   ├── test_finance_math.py     # Kredi matematiği + Monte Carlo değişmezleri
 │   ├── test_runway.py           # Statik/trend runway, Theil–Sen dayanıklılığı
-│   └── test_data_integrity.py   # Mock veri tutarlılığı + yükleme dayanıklılığı
+│   ├── test_data_integrity.py   # Mock veri tutarlılığı + yükleme dayanıklılığı
+│   ├── test_report.py           # PDF üretimi, font ve para birimi kararı
+│   ├── test_ai_cfo.py           # Sağlayıcı seçimi, fallback, teşhis, sızıntı
+│   ├── test_store.py            # Defter sözleşmesi: kayıp yok, bozuk dosya çökertmez
+│   ├── test_scenario.py         # URL'de taşınan senaryonun dayanıklılığı
+│   ├── test_api.py              # HTTP uçları + motorla aynı sayıyı verdiği
+│   └── test_app_wiring.py       # Arayüz kablolaması (Streamlit AppTest)
 ├── data/
 │   └── mock_company_data.json   # Uygulama boş açılmasın diye sahte şirket
 ├── .streamlit/config.toml       # Karanlık tema temel ayarları
-├── requirements.txt
+├── requirements.txt             # Streamlit dağıtımı
+├── requirements-api.txt         # API dağıtımı (arayüz yığını YOK)
 └── README.md
 ```
 
