@@ -104,6 +104,21 @@ olasılığı verilecek. Görevin:
 Türkçe yaz. Abartılı nezaket yok. 'Bence' gibi zayıf ifadeler kullanma."""
 
 
+def _sadelestir(mesaj: str) -> str:
+    """
+    Sağlayıcının hata gövdesinden insanca cümleyi çıkar.
+
+    Ham hali JSON + request_id ile birlikte gelir; olduğu gibi göstermek halka
+    açık demoda hem çirkin hem gereksiz. İçindeki 'message' alanı zaten
+    kullanıcıya yazılmış tek anlaşılır cümledir.
+    """
+    for desen in (r"'message':\s*'([^']+)'", r'"message":\s*"([^"]+)"'):
+        bulunan = re.search(desen, mesaj)
+        if bulunan:
+            return bulunan.group(1)
+    return mesaj if len(mesaj) <= 180 else mesaj[:180] + "…"
+
+
 def _anahtari_gizle(metin: str) -> str:
     """
     Hata mesajını göstermeden önce içindeki olası anahtarı sil. Mesaj arayüze
@@ -176,7 +191,7 @@ class RuthlessCFO:
             try:
                 return CFOAdvice(ask(ctx), label)
             except Exception as e:
-                hatalar.append(f"{label}: {type(e).__name__}: {e}")
+                hatalar.append(f"{label}: {_sadelestir(str(e))}")
                 continue
         # Her koşulda çalışan güvenli liman:
         return CFOAdvice(self._rule_based(ctx), "Kural Tabanlı Motor",
