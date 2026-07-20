@@ -31,8 +31,24 @@ MAX_ITER = 50_000
 
 app = FastAPI(
     title="Cash Guard API",
-    description="Nakit hayatta kalma ve kredi stres testi motoru.",
+    description=(
+        "Nakit hayatta kalma ve kredi stres testi motoru.\n\n"
+        "Streamlit arayüzü ([canlı demo](https://cash-guard-eren.streamlit.app)) "
+        "bu motorun bir tüketicisi; burası ikincisi. **Hesap mantığı hiçbir yerde "
+        "kopyalanmaz** — ikisi de `modules/` altındaki aynı kodu çağırır, bu yüzden "
+        "iki arayüz aynı şirket için farklı sayı gösteremez.\n\n"
+        "Kaynak kod: [github.com/ealagoz233-cmd/cash-guard]"
+        "(https://github.com/ealagoz233-cmd/cash-guard)\n\n"
+        "> Karar-destek prototipidir (PoC), yatırım/finans tavsiyesi değildir."
+    ),
     version="1.0.0",
+    license_info={"name": "MIT",
+                  "url": "https://github.com/ealagoz233-cmd/cash-guard/blob/main/LICENSE"},
+    openapi_tags=[
+        {"name": "Servis", "description": "Sağlık kontrolü ve uyandırma."},
+        {"name": "Analiz", "description":
+            "Motorun asıl işi: stres testi, kredi senaryosu ve CFO aksiyon planı."},
+    ],
 )
 
 
@@ -83,13 +99,14 @@ class TavsiyeIstegi(BaseModel):
 
 
 # ── Uç noktalar ───────────────────────────────────────────────────────────
-@app.get("/health")
+@app.get("/health", tags=["Servis"], summary="Servis ayakta mı?")
 def health() -> dict:
     """Servis ayakta mı — dağıtım sağlık kontrolü için."""
     return {"status": "ok"}
 
 
-@app.post("/simulate")
+@app.post("/simulate", tags=["Analiz"],
+          summary="Monte Carlo stres testi — batma olasılığı")
 def simulate(istek: SimulasyonIstegi) -> dict:
     """
     Monte Carlo stres testi: batma olasılığı, beklenen iflas ayı, nakit ömrü.
@@ -107,7 +124,8 @@ def simulate(istek: SimulasyonIstegi) -> dict:
     }
 
 
-@app.post("/loan")
+@app.post("/loan", tags=["Analiz"],
+          summary="Kredi senaryosu — borç tuzağı analizi")
 def loan(istek: KrediIstegi) -> dict:
     """
     Kredi senaryosu: taksit, toplam faiz ve kredinin iflası öteleyip
@@ -118,7 +136,8 @@ def loan(istek: KrediIstegi) -> dict:
     return {k: v for k, v in sonuc.items() if isinstance(v, (int, float, type(None)))}
 
 
-@app.post("/advise")
+@app.post("/advise", tags=["Analiz"],
+          summary="Acımasız CFO aksiyon planı")
 def advise(istek: TavsiyeIstegi) -> dict:
     """
     Acımasız CFO aksiyon planı. API anahtarı tanımlıysa LLM, değilse
