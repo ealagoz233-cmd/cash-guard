@@ -30,7 +30,12 @@ from modules import monte_carlo as mc
 from modules import scenario
 from modules import store
 from modules.ai_cfo import RuthlessCFO
-from modules.data_io import REQUIRED_HISTORY_COLS, load_mock, parse_uploaded
+from modules.data_io import (
+    REQUIRED_HISTORY_COLS,
+    load_mock,
+    ornek_sablon,
+    parse_uploaded,
+)
 from modules.report import build_report
 from modules.runway import static_runway, trend_runway
 from utils import theme
@@ -102,6 +107,20 @@ upload = st.sidebar.file_uploader(
     help="Biçim A: 'alan,deger' sütunları. Biçim B: month, revenue, fixed_expense, "
          "collections, cash_end sütunlu aylık tablo.",
 )
+
+# Şablon, yükleyicinin hemen altında duruyor: biçimi öğrenmek için README'ye
+# gitmek zorunda kalan kullanıcı çoğu zaman hiç denemiyor. İçerik data_io'nun
+# gerçekten okuduğu alan adlarından üretiliyor — elle yazılan bir örnek, kod
+# değişince sessizce yanlışa döner.
+st.sidebar.download_button(
+    "⬇️ Örnek şablon (CSV)",
+    data=ornek_sablon(),
+    file_name="cash_guard_sablon.csv",
+    mime="text/csv",
+    width="stretch",
+    help="İndir, kendi rakamlarınla doldur, yukarıdan yükle.",
+)
+
 data = parse_uploaded(upload) if upload else load_mock()
 if data is None:
     data = load_mock()

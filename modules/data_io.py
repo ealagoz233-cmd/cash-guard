@@ -141,6 +141,35 @@ def _to_float(value) -> float:
     return float(s)
 
 
+# Biçim A'da okunan alanlar ve şablondaki açıklamaları. Tek kaynak: hem
+# ayrıştırıcı hem indirilen örnek şablon buradan beslenir. Ayrı ayrı yazılsalar
+# kod değiştiğinde şablon sessizce yanlışa döner ve kullanıcı, uygulamanın
+# görmediği bir alanı doldurup neden değişmediğini anlamaz.
+BICIM_A_ALANLARI = {
+    "current_cash": "Bugünkü kasa / banka toplamı",
+    "avg_monthly_revenue": "Aylık ortalama FATURALANAN gelir",
+    "avg_monthly_collections": "Aylık ortalama TAHSİL EDİLEN nakit",
+    "avg_monthly_fixed_expense": "Aylık ortalama sabit gider",
+    "existing_debt": "Mevcut toplam borç stoku",
+    "existing_monthly_debt_service": "Aylık borç servisi (taksit)",
+}
+
+
+def ornek_sablon() -> bytes:
+    """
+    İndirilebilir Biçim A şablonu (UTF-8 BOM'lu, Excel Türkçe karakterleri
+    bozmasın diye).
+
+    Değerler örnek şirketten alınır: boş bir iskelet yerine dolu bir dosya,
+    kullanıcıya beklenen büyüklük mertebesini de gösterir.
+    """
+    ornek = load_mock()
+    satirlar = ["alan,deger,aciklama"]
+    for alan, aciklama in BICIM_A_ALANLARI.items():
+        satirlar.append(f"{alan},{ornek.get(alan, 0):.0f},{aciklama}")
+    return ("﻿" + "\n".join(satirlar) + "\n").encode("utf-8")
+
+
 def parse_uploaded(file) -> dict | None:
     """
     Kullanıcı CSV/Excel'ini esnekçe ayrıştırır.
@@ -176,9 +205,7 @@ def parse_uploaded(file) -> dict | None:
                     "veri gösteriliyor: " + ", ".join(atlanan[:5])
                     + ("…" if len(atlanan) > 5 else "")
                 )
-            for key in ("current_cash", "avg_monthly_revenue", "avg_monthly_collections",
-                        "avg_monthly_fixed_expense", "existing_debt",
-                        "existing_monthly_debt_service"):
+            for key in BICIM_A_ALANLARI:
                 if key in kv:
                     base[key] = kv[key]
             # Tahsilat verilmediyse faturalanan gelire eşitle (alacak boşluğu = 0).

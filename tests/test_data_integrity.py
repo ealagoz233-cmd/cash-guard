@@ -258,6 +258,36 @@ def test_unparseable_value_does_not_silently_show_mock_number():
     assert d["current_cash"] == mock_kasa
 
 
+def test_indirilen_sablon_geri_yuklenebilir():
+    """
+    Şablonun tek işi var: kullanıcı indirsin, doldursun, yüklesin. Ayrıştırıcı
+    ile şablon ayrı yerlerde tanımlansaydı biri değiştiğinde diğeri sessizce
+    yanlışa döner, kullanıcı uygulamanın hiç okumadığı bir alanı doldurup
+    neden değişmediğini anlayamazdı.
+
+    Bu yüzden gidiş-dönüşün tamamı ölçülüyor: üret → değiştir → ayrıştır.
+    """
+    from modules.data_io import BICIM_A_ALANLARI, ornek_sablon
+
+    ham = ornek_sablon().decode("utf-8")
+    for alan in BICIM_A_ALANLARI:
+        assert alan in ham, f"şablonda '{alan}' yok"
+
+    # Kullanıcı kendi rakamını yazmış gibi tek alanı değiştir.
+    degistirilmis = ham.replace("current_cash,4200000", "current_cash,9999999")
+    assert degistirilmis != ham, "test verisi güncel değil (kasa değeri değişmiş)"
+
+    class _Dosya(io.BytesIO):
+        name = "cash_guard_sablon.csv"
+
+    sonuc = parse_uploaded(_Dosya(degistirilmis.encode("utf-8")))
+    assert sonuc is not None, "kendi ürettiğimiz şablon ayrıştırılamadı"
+    assert sonuc["current_cash"] == 9999999.0, \
+        f"kullanıcının yazdığı değer okunmadı: {sonuc['current_cash']}"
+    # Dokunulmayan alanlar da şablondan gelmeli, mock'tan sızmamalı.
+    assert sonuc["existing_monthly_debt_service"] == 950000.0
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):
