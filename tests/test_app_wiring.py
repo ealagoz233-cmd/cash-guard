@@ -29,8 +29,14 @@ from streamlit.testing.v1 import AppTest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from modules import store
+
 _KOK = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _APP = os.path.join(_KOK, "app.py")
+
+# Geri yükleme testi için hazır kayıt (test_store.py'dekiyle aynı biçim).
+_SENARYO = {"kredi": 10_000_000, "vade": 24, "faiz": 3.5}
+_OZET = {"batma_yuzde": 94.3, "iflas_ayi": 8, "aylik_net": -100_000}
 
 # Tam bir uygulama koşusu ~5 sn (10.000 senaryoluk Monte Carlo dahil).
 _TIMEOUT = 180
@@ -194,6 +200,70 @@ def test_urlden_gelen_senaryo_deftere_dogru_kaydedilir():
     satir = at.dataframe[0].value.iloc[0]
     assert satir["Senaryo"] == "Kredisiz · linkten"
     assert satir["Kredi"] == 0, f"URL'deki kredi deftere ulaşmadı: {satir['Kredi']}"
+
+
+def _defter_yukleyici(at):
+    """Sayfada CSV/Excel yükleyici de var — defterinkini etiketinden ayır."""
+    for f in at.get("file_uploader"):
+        if "defteri geri yükle" in f.label:
+            return f
+    raise AssertionError("defter yükleyicisi bulunamadı")
+
+
+def test_indirilen_defter_geri_yuklenebilir():
+    """
+    Kalıcılık vaadinin tamamı bu: kullanıcı defterini indirir, yarın geri
+    yükler. Yükleme kablosu koparsa dosya elinde kalır ama işe yaramaz.
+
+    Not: indirme butonunun ürettiği baytlara AppTest'ten erişilemiyor (yalnızca
+    mock bir medya URL'i veriliyor), o yüzden dosya butonun kullandığı aynı
+    fonksiyonla (store.disa_aktar) üretiliyor.
+    """
+    dosya = store.disa_aktar(store.kaydet([], "Dünkü senaryo", _SENARYO, _OZET))
+
+    at = _uygulama()
+    _defter_yukleyici(at).set_value(("cash_guard_senaryolar.json", dosya,
+                                     "application/json")).run()
+    assert not at.exception, f"geri yükleme patladı: {at.exception}"
+    assert at.dataframe, "geri yüklenen defter tabloya dönüşmedi"
+    assert at.dataframe[0].value.iloc[0]["Senaryo"] == "Dünkü senaryo"
+
+
+def test_geri_yukleme_sonraki_kaydi_ezmez():
+    """
+    Gerçek bir hatanın nöbetçisi (bu test yazılırken bulundu ve düzeltildi).
+
+    Yüklenen dosya, seçili kaldığı sürece her yeniden koşuda yükleyiciden geri
+    gelir. İçe aktarma koşulsuz yapılırsa arada kaydedilen senaryo ezilir:
+    kullanıcı kaydını tabloda görür, sonra bir sürgü oynatır ve kaydı sessizce
+    kaybolur — projenin en temel vaadinin (analizini KAYBETMEZSİN) ihlali.
+    """
+    dosya = store.disa_aktar(store.kaydet([], "Dünkü", _SENARYO, _OZET))
+
+    at = _uygulama()
+    _defter_yukleyici(at).set_value(("d.json", dosya, "application/json")).run()
+    at = _kaydet(at, "Bugünkü")
+    assert list(at.dataframe[0].value["Senaryo"]) == ["Dünkü", "Bugünkü"]
+
+    # Kritik kısım: kaydettikten SONRAKİ etkileşimlerde de durmalı.
+    _surgu(at, "Vade").set_value(36).run()
+    at.run()
+    assert list(at.dataframe[0].value["Senaryo"]) == ["Dünkü", "Bugünkü"], \
+        "geri yükleme, sonradan kaydedilen senaryoyu ezdi"
+
+
+def test_bozuk_defter_dosyasi_cokertmez_ve_uyarir():
+    """
+    Yükleme, en güvenilmez girdi kapısı. store.ice_aktar() bozuk içeriğe
+    dayanıklı (test_store.py); burada app.py'nin o boş sonucu kullanıcıya
+    HATA olarak gösterdiğini doğruluyoruz — sessizce yutmadığını.
+    """
+    at = _uygulama()
+    _defter_yukleyici(at).set_value(("bozuk.json", b"{bu json degil",
+                                     "application/json")).run()
+    assert not at.exception, f"bozuk dosya patlattı: {at.exception}"
+    assert at.error, "bozuk dosya için kullanıcıya hata gösterilmedi"
+    assert not at.dataframe, "bozuk dosyadan tablo çizilmiş"
 
 
 if __name__ == "__main__":

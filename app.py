@@ -655,6 +655,30 @@ with kay2:
              "aylik_net": round(monthly_net)},
         )
 
+# Geri yükleme, tabloyu çizmeden ÖNCE işlenmeli: yoksa dosyayı yükleyen
+# kullanıcı "n kayıt geri yüklendi" mesajını görür ama tabloyu bir sonraki
+# etkileşime kadar göremez.
+_yuklenen_defter = st.file_uploader(
+    "Daha önce indirdiğin defteri geri yükle (JSON)", type=["json"],
+    help="Kayıtlar sunucuda tutulmaz; kalıcılık indirdiğin dosyadadır.")
+
+# Dosya, seçili kaldığı sürece HER yeniden koşuda yükleyiciden geri gelir.
+# Koşulsuz içe aktarmak, o arada kaydedilen yeni senaryoları ezerdi: kullanıcı
+# kaydını tabloda görür, sonra bir sürgü oynatınca kaydı sessizce kaybolurdu.
+# Bu yüzden her dosya yalnızca bir kez içe aktarılır.
+if _yuklenen_defter is not None:
+    if st.session_state.get("_yuklenen_dosya") != _yuklenen_defter.file_id:
+        st.session_state._yuklenen_dosya = _yuklenen_defter.file_id
+        _gelen = store.ice_aktar(_yuklenen_defter.getvalue())
+        if _gelen:
+            st.session_state.defter = _gelen
+            st.success(f"{len(_gelen)} kayıt geri yüklendi.")
+        else:
+            st.error("Dosya okunamadı ya da içinde geçerli kayıt yok.")
+else:
+    # Kullanıcı dosyayı kaldırdıysa aynı dosyayı tekrar yükleyebilmeli.
+    st.session_state.pop("_yuklenen_dosya", None)
+
 if st.session_state.defter:
     st.dataframe(pd.DataFrame(store.karsilastirma_tablosu(st.session_state.defter)),
                  width="stretch", hide_index=True)
@@ -674,17 +698,6 @@ if st.session_state.defter:
 else:
     st.caption("Henüz kayıt yok. Sürgüleri ayarlayıp bir senaryoyu kaydet, "
                "sonra başka bir senaryo deneyip ikisini yan yana gör.")
-
-_yuklenen_defter = st.file_uploader(
-    "Daha önce indirdiğin defteri geri yükle (JSON)", type=["json"],
-    help="Kayıtlar sunucuda tutulmaz; kalıcılık indirdiğin dosyadadır.")
-if _yuklenen_defter is not None:
-    _gelen = store.ice_aktar(_yuklenen_defter.getvalue())
-    if _gelen:
-        st.session_state.defter = _gelen
-        st.success(f"{len(_gelen)} kayıt geri yüklendi.")
-    else:
-        st.error("Dosya okunamadı ya da içinde geçerli kayıt yok.")
 
 
 # ══════════════════════════════════════════════════════════════════════════
