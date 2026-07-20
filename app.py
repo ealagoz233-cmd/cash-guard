@@ -30,12 +30,8 @@ from modules import monte_carlo as mc
 from modules import scenario
 from modules import store
 from modules.ai_cfo import RuthlessCFO
-from modules.data_io import (
-    REQUIRED_HISTORY_COLS,
-    load_mock,
-    ornek_sablon,
-    parse_uploaded,
-)
+from modules import data_io
+from modules.data_io import REQUIRED_HISTORY_COLS, load_mock, parse_uploaded
 from modules.report import build_report
 from modules.runway import static_runway, trend_runway
 from utils import theme
@@ -112,14 +108,24 @@ upload = st.sidebar.file_uploader(
 # gitmek zorunda kalan kullanıcı çoğu zaman hiç denemiyor. İçerik data_io'nun
 # gerçekten okuduğu alan adlarından üretiliyor — elle yazılan bir örnek, kod
 # değişince sessizce yanlışa döner.
-st.sidebar.download_button(
-    "⬇️ Örnek şablon (CSV)",
-    data=ornek_sablon(),
-    file_name="cash_guard_sablon.csv",
-    mime="text/csv",
-    width="stretch",
-    help="İndir, kendi rakamlarınla doldur, yukarıdan yükle.",
-)
+#
+# `from modules.data_io import ornek_sablon` YAZILMIYOR, bilerek: Streamlit
+# Cloud yeni commit'te script'i yeniden çalıştırırken sys.modules'teki eski
+# modül nesnesini koruyabiliyor. O durumda modüle YENİ eklenen bir isim
+# bulunamaz ve import satırı patlar — yani tek bir yeni fonksiyon, tüm
+# uygulamayı ölü bir hata sayfasına çevirir (bir kez oldu). Modülün kendisini
+# alıp özelliği yoklayınca, en kötü ihtimalle bu buton görünmez; uygulama ayakta
+# kalır ve bir sonraki yeniden başlatmada kendiliğinden düzelir.
+_sablon_uret = getattr(data_io, "ornek_sablon", None)
+if _sablon_uret is not None:
+    st.sidebar.download_button(
+        "⬇️ Örnek şablon (CSV)",
+        data=_sablon_uret(),
+        file_name="cash_guard_sablon.csv",
+        mime="text/csv",
+        width="stretch",
+        help="İndir, kendi rakamlarınla doldur, yukarıdan yükle.",
+    )
 
 data = parse_uploaded(upload) if upload else load_mock()
 if data is None:
