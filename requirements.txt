@@ -14,7 +14,7 @@ reportlab>=4.0     # yönetim kuruluna sunulacak PDF rapor üretimi
 # yorumlu kalırsa Secrets'a ANTHROPIC_API_KEY yazmak hiçbir şey değiştirmez,
 # uygulama sessizce kural tabanlı motorda kalır. Anahtar yoksa da zararı yok —
 # paket kurulur, kullanılmaz, fallback devrededir.
-anthropic>=0.40                # -> ANTHROPIC_API_KEY (önerilen)
+anthropic>=0.40                # -> ANTHROPIC_API_KEY (en iyi metin, kredi ister)
 
 # Gemini de açık, çünkü ücretsiz katmanı var: aistudio.google.com'dan kart
 # vermeden anahtar alınıp GOOGLE_API_KEY olarak Secrets'a konabiliyor. Claude

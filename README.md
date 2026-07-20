@@ -88,18 +88,27 @@ Kural tabanlı motor anahtarsız çalışır. Gerçek bir LLM istiyorsan ortam
 değişkeni tanımla:
 
 ```bash
-# Claude (önerilen)
-export ANTHROPIC_API_KEY="sk-ant-..."
-# ya da OpenAI
-export OPENAI_API_KEY="sk-..."
-# ya da Gemini
+# Gemini — ücretsiz katmanı var (aistudio.google.com, kart istemiyor)
 export GOOGLE_API_KEY="AIza..."
+# Claude — en iyi metin, ama kullandıkça ödeme; hesapta kredi olmalı
+export ANTHROPIC_API_KEY="sk-ant-..."
+# OpenAI
+export OPENAI_API_KEY="sk-..."
 ```
 
-Anahtar + ilgili SDK varsa CFO otomatik olarak gerçek modeli kullanır; yoksa
-sessizce kural tabanlı motora düşer. Birden fazla anahtar tanımlıysa sıra
-Claude → OpenAI → Gemini'dir ve biri hata verirse bir sonrakine geçilir.
-Rapor kutusundaki "Kaynak" rozeti hangisinin kullanıldığını gösterir.
+**Paket durumu:** `anthropic` ve `google-generativeai` requirements.txt'te
+açık, yani anahtarı yazman yeterli. `openai` yorumlu — kullanacaksan
+`pip install "openai>=1.30"` de gerekir. (SDK'sız bir anahtar hiçbir şey
+yapmaz; bu, fark edilmesi zor bir tuzak olduğu için arayüz artık söylüyor.)
+
+Birden fazla anahtar tanımlıysa sıra Claude → OpenAI → Gemini'dir ve biri
+hata verirse bir sonrakine geçilir. Rapor kutusundaki "Kaynak" rozeti
+hangisinin kullanıldığını gösterir.
+
+Hiç anahtar yoksa uygulama sessizce kural tabanlı motorda kalır — bu bir arıza
+değil, halka açık demonun varsayılanı. Ama anahtar **tanımlıyken** LLM devreye
+girmiyorsa rozetin altında sebebi yazar (paket eksik / anahtar geçersiz / kota
+bitmiş), çünkü sessiz kalmak anahtarı ekleyen kişiyi karanlıkta bırakıyordu.
 
 Model adları koda gömülü değil; sağlayıcılar katalog değiştirdiğinde
 `CG_CLAUDE_MODEL`, `CG_OPENAI_MODEL`, `CG_GEMINI_MODEL` ile ezebilirsin.
@@ -107,7 +116,7 @@ Model adları koda gömülü değil; sağlayıcılar katalog değiştirdiğinde
 **Streamlit Cloud'da:** uygulama ayarlarındaki **Secrets** kutusuna yaz:
 
 ```toml
-ANTHROPIC_API_KEY = "sk-ant-..."
+GOOGLE_API_KEY = "AIza..."
 ```
 
 > Anahtarı **kök seviyeye** koy. Streamlit yalnızca kök seviyedeki sırları
@@ -115,8 +124,10 @@ ANTHROPIC_API_KEY = "sk-ant-..."
 > göremez. Uygulama her iki durumu da okuyacak şekilde yazıldı, ama başka
 > araçlarla uğraşmamak için kökte tutmak en sağlamı.
 
-Anahtar eklendikten sonra rapor kutusundaki **"Kaynak"** rozeti `Claude`
-yazmalı. Hâlâ `Kural Tabanlı Motor` diyorsa anahtar okunmuyordur.
+Anahtar eklendikten sonra rapor kutusundaki **"Kaynak"** rozeti kullanılan
+sağlayıcının adını (`Gemini`, `Claude`, `OpenAI`) yazmalı. Hâlâ `Kural Tabanlı
+Motor` diyorsa rozetin hemen altındaki uyarı satırı sebebini söyler — tahmin
+etmene gerek yok.
 
 ---
 
