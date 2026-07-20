@@ -290,6 +290,32 @@ def test_ilk_saglayici_patlarsa_digerine_duser():
         _geri_yukle(onceki)
 
 
+def test_paket_eksigi_baska_saglayici_patlasa_da_raporlanir():
+    """
+    Gerçek bir körlüğün nöbetçisi: Claude kredi hatası verirken Gemini'nin
+    paketi eksikse, eski sürüm sadece Claude hatasını yazıp paket eksiğini
+    yutuyordu — yani çözümü gizliyordu. İkisi birlikte raporlanmalı.
+
+    Ayrıca hangi anahtarların OKUNDUĞU yazılmalı (isim, değer değil):
+    "Secrets'a yazdım ama görünmüyor" ile "yazdığım yer yanlış" ayrımını
+    başka türlü yapmak mümkün değil.
+    """
+    onceki = _claude_kurulu(dict(_ANAHTARSIZ,
+                                 ANTHROPIC_API_KEY="kredisiz",
+                                 GOOGLE_API_KEY="anahtar"))
+    eski = (ai_cfo._HAS_CLAUDE, ai_cfo._HAS_GEMINI)
+    ai_cfo._HAS_CLAUDE, ai_cfo._HAS_GEMINI = True, False   # Gemini paketi yok
+    try:
+        sebep = RuthlessCFO().neden_yerel_motor(["Claude: kredi bitti"])
+        assert "kredi bitti" in sebep, "çağrı hatası kayboldu"
+        assert "google-generativeai" in sebep, "paket eksiği yutuldu"
+        assert "GOOGLE_API_KEY" in sebep and "ANTHROPIC_API_KEY" in sebep, \
+            f"görülen anahtarlar listelenmedi: {sebep}"
+    finally:
+        ai_cfo._HAS_CLAUDE, ai_cfo._HAS_GEMINI = eski
+        _geri_yukle(onceki)
+
+
 def test_sebep_metni_anahtari_sizdirmaz():
     """
     Sebep arayüze çıkıyor. Sağlayıcı bir gün anahtarı hata metnine koyarsa

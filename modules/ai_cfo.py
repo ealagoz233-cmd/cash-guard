@@ -210,19 +210,32 @@ class RuthlessCFO:
         paket yok (requirements), çağrı patladı (geçersiz anahtar / kota / ağ),
         anahtar başka sağlayıcıya ait.
         """
-        anahtar_var = bool(self.claude_key or self.openai_key or self.gemini_key)
-        if not anahtar_var:
+        saglayicilar = (
+            ("ANTHROPIC_API_KEY", self.claude_key, _HAS_CLAUDE, "anthropic"),
+            ("OPENAI_API_KEY", self.openai_key, _HAS_OPENAI, "openai"),
+            ("GOOGLE_API_KEY", self.gemini_key, _HAS_GEMINI, "google-generativeai"),
+        )
+        if not any(anahtar for _, anahtar, _, _ in saglayicilar):
             return None
 
+        parcalar = []
         if hatalar:
-            return _anahtari_gizle("çağrı başarısız — " + "; ".join(hatalar))
-        if self.claude_key and not _HAS_CLAUDE:
-            return "ANTHROPIC_API_KEY tanımlı ama anthropic paketi kurulu değil."
-        if self.openai_key and not _HAS_OPENAI:
-            return "OPENAI_API_KEY tanımlı ama openai paketi kurulu değil."
-        if self.gemini_key and not _HAS_GEMINI:
-            return "GOOGLE_API_KEY tanımlı ama google-generativeai kurulu değil."
-        return "Anahtar okundu ama hiçbir sağlayıcı kullanılabilir değil."
+            parcalar.append("çağrı başarısız — " + "; ".join(hatalar))
+
+        # Paket eksiği, BİR BAŞKA sağlayıcı hata verse bile raporlanmalı. Önceki
+        # sürüm hata varsa buraya hiç bakmıyordu; sonuç: "Claude patladı" yazıp
+        # "Gemini'nin paketi yok"u yutuyordu — yani çözümü gizliyordu.
+        for ad, anahtar, kurulu, paket in saglayicilar:
+            if anahtar and not kurulu:
+                parcalar.append(f"{ad} tanımlı ama {paket} paketi kurulu değil")
+
+        # Hangi anahtarların OKUNDUĞU (isim, değer değil). Bir anahtarı Secrets'a
+        # yazıp burada göremiyorsan sorun anahtarın kendisinde değil, nereye
+        # yazıldığındadır — bu satır olmadan o ayrımı yapmak imkânsızdı.
+        gorulen = [ad for ad, anahtar, _, _ in saglayicilar if anahtar]
+        parcalar.append("görülen anahtarlar: " + (", ".join(gorulen) or "yok"))
+
+        return _anahtari_gizle(" · ".join(parcalar))
 
     # ── Gerçek LLM yolları ────────────────────────────────────────────────
     def _user_payload(self, ctx: dict) -> str:
