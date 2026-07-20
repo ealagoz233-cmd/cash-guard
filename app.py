@@ -55,8 +55,16 @@ def run_monte_carlo(**kwargs) -> mc.StressResult:
 
 
 @st.cache_data(show_spinner=False)
-def get_cfo_advice(ctx_json: str) -> dict:
-    """CFO tavsiyesini bağlam JSON'una göre önbelleğe alır (LLM çağrısını az tutar)."""
+def get_cfo_advice(ctx_json: str, motorlar: str) -> dict:
+    """
+    CFO tavsiyesini bağlam JSON'una göre önbelleğe alır (LLM çağrısını az tutar).
+
+    `motorlar` hesapta kullanılmaz; yalnızca önbellek anahtarına girsin diye var.
+    Olmazsa şu olur: anahtarsız açılışta kural tabanlı cevap önbelleğe yazılır,
+    sonra Secrets'a anahtar eklenir ve cevap DEĞİŞMEZ — çünkü senaryo sayıları
+    aynıdır. Kullanıcı anahtarı doğru koymuştur ama hiçbir şey olmaz; sağlayıcı
+    kümesi de anahtarın parçası olunca bu sessiz takılma ortadan kalkar.
+    """
     ctx = json.loads(ctx_json)
     advice = RuthlessCFO().advise(ctx)
     return {"text": advice.text, "source": advice.source, "reason": advice.reason}
@@ -744,7 +752,8 @@ regen = colb.button(
 if regen:
     get_cfo_advice.clear()  # önbelleği temizle, tazele
 
-advice = get_cfo_advice(json.dumps(cfo_ctx, ensure_ascii=False, sort_keys=True))
+advice = get_cfo_advice(json.dumps(cfo_ctx, ensure_ascii=False, sort_keys=True),
+                        ",".join(llm_engines) or "yerel")
 cols.markdown(
     f'<span class="cg-badge">Kaynak: {advice["source"]}</span>'
     + ("" if llm_engines else

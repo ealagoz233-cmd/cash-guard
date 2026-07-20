@@ -266,6 +266,57 @@ def test_bozuk_defter_dosyasi_cokertmez_ve_uyarir():
     assert not at.dataframe, "bozuk dosyadan tablo çizilmiş"
 
 
+def test_anahtar_eklenince_onbellek_takilmaz():
+    """
+    Gerçek bir hatanın nöbetçisi (canlıda yaşandı).
+
+    CFO cevabı önbellekli ve anahtar yalnızca senaryo sayılarından üretiliyordu.
+    Sonuç: anahtarsız açılışta kural tabanlı cevap önbelleğe yazılıyor, sonra
+    Secrets'a anahtar ekleniyor ve HİÇBİR ŞEY DEĞİŞMİYOR — sayılar aynı olduğu
+    için önbellek isabet ediyor. Kullanıcı her şeyi doğru yapmış ama karşısında
+    hâlâ "Kural Tabanlı Motor" duruyor.
+
+    Sağlayıcı kümesi de önbellek anahtarına girmeli.
+    """
+    import types
+
+    from modules import ai_cfo
+
+    def _rozet(at):
+        metin = " ".join(m.value for m in at.markdown if m.value)
+        return "Gemini" if "Gemini" in metin else "Kural Tabanlı Motor"
+
+    eski_env = {k: os.environ.get(k) for k in
+                ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
+                 "GEMINI_API_KEY")}
+    eski_sdk, eski_bayrak = getattr(ai_cfo, "genai", None), ai_cfo._HAS_GEMINI
+    for k in eski_env:
+        os.environ.pop(k, None)
+    try:
+        # 1) Anahtarsız koşu — kural tabanlı cevap önbelleğe yazılır.
+        assert _rozet(_uygulama()) == "Kural Tabanlı Motor"
+
+        # 2) Anahtar eklenir (kullanıcının Secrets'a yazması). Sayılar aynı.
+        os.environ["GOOGLE_API_KEY"] = "test-anahtar"
+        ai_cfo._HAS_GEMINI = True
+        ai_cfo.genai = types.SimpleNamespace(
+            configure=lambda **k: None,
+            GenerativeModel=lambda *a, **k: types.SimpleNamespace(
+                generate_content=lambda p: types.SimpleNamespace(text="Gemini planı")),
+        )
+
+        assert _rozet(_uygulama()) == "Gemini", (
+            "anahtar eklendi ama cevap değişmedi — önbellek sağlayıcı kümesini "
+            "hesaba katmıyor, kullanıcı doğru yaptığı halde takılı kalır")
+    finally:
+        ai_cfo.genai, ai_cfo._HAS_GEMINI = eski_sdk, eski_bayrak
+        for k, v in eski_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):
