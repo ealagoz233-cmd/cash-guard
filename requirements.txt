@@ -6,20 +6,21 @@ numpy>=1.26
 plotly>=5.22
 reportlab>=4.0     # yönetim kuruluna sunulacak PDF rapor üretimi
 
-# ── Opsiyonel: Yapay Zeka "Acımasız CFO" ajanı ────────────────────────────
-# Bu paketler KURULU DEĞİLSE uygulama yine de çalışır: kural tabanlı
-# (rule-based) yerel CFO motoruna otomatik düşer. API anahtarı gerekmez.
-# Gerçek LLM istiyorsan aşağıdakilerden BİRİNİ kurup ortam değişkenini set et:
-#   pip install "anthropic>=0.40"           -> ANTHROPIC_API_KEY   (önerilen)
-#   pip install "openai>=1.30"              -> OPENAI_API_KEY
-#   pip install "google-generativeai>=0.7"  -> GOOGLE_API_KEY (veya GEMINI_API_KEY)
-# Birden fazlası tanımlıysa sıra: Claude -> OpenAI -> Gemini.
-# Model adları CG_CLAUDE_MODEL / CG_OPENAI_MODEL / CG_GEMINI_MODEL ile ezilebilir.
-# Bilerek yorumlu: varsayılan kurulum hafif kalsın, kimse kullanmadığı SDK'yı
-# indirmesin. Uygulama ikisi de yokken tam işlevlidir.
-# anthropic>=0.40
-# openai>=1.30
-# google-generativeai>=0.7
+# ── Yapay Zeka "Acımasız CFO" ajanı ───────────────────────────────────────
+# SDK KURULU DEĞİLSE uygulama yine çalışır: kural tabanlı (rule-based) yerel
+# CFO motoruna otomatik düşer, API anahtarı gerekmez.
+#
+# Claude SDK'sı açık, çünkü Streamlit Cloud YALNIZCA bu dosyayı kurar: paket
+# yorumlu kalırsa Secrets'a ANTHROPIC_API_KEY yazmak hiçbir şey değiştirmez,
+# uygulama sessizce kural tabanlı motorda kalır. Anahtar yoksa da zararı yok —
+# paket kurulur, kullanılmaz, fallback devrededir.
+anthropic>=0.40                # -> ANTHROPIC_API_KEY (önerilen)
+
+# Diğer sağlayıcılar isteğe bağlı; birden fazlası tanımlıysa sıra:
+# Claude -> OpenAI -> Gemini. Model adları CG_CLAUDE_MODEL / CG_OPENAI_MODEL /
+# CG_GEMINI_MODEL ile ezilebilir.
+# openai>=1.30                 -> OPENAI_API_KEY
+# google-generativeai>=0.7     -> GOOGLE_API_KEY (veya GEMINI_API_KEY)
 
 # ── Opsiyonel: Test ───────────────────────────────────────────────────────
 # Testler pytest OLMADAN da koşar (her dosyada __main__ bloğu var):
