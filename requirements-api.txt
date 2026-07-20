@@ -1,11 +1,26 @@
-# ── Cash Guard API — ek bağımlılıklar ─────────────────────────────────────
-# Ayrı dosya, çünkü Streamlit dağıtımının bunlara ihtiyacı yok: requirements
-# .txt'e eklenirse Streamlit Cloud her kurulumda gereksiz paket indirir.
+# ── Cash Guard API — bağımlılıklar ────────────────────────────────────────
+# Bilerek BAĞIMSIZ: eskiden `-r requirements.txt` ile ARAYÜZ yığınını da
+# (streamlit, plotly, reportlab) çekiyordu. Her biri tek tek ölçüldü: api.py'nin
+# import zinciri üçüne de dokunmuyor. Gereksiz paket, ücretsiz katmanda kurulum
+# süresini ve bellek tavanını boşuna yer.
+#
+# pandas ve numpy GEREKLİ — motorun kendisi kullanıyor (runway, loan_simulator,
+# data_io). Bunlar veri kütüphanesi, arayüz bağımlılığı değil.
+# tests/test_api.py sınırı import'ları fiilen engelleyerek bekçilik ediyor.
 #
 # Kullanım:
-#   pip install -r requirements.txt -r requirements-api.txt
+#   pip install -r requirements-api.txt
 #   uvicorn api:app --reload
--r requirements.txt
+#   # http://localhost:8000/docs
 
+numpy>=1.26          # Monte Carlo çekirdeği (vektörize)
+pandas>=2.2          # runway / loan_simulator zaman serileri
 fastapi>=0.115
 uvicorn[standard]>=0.30
+
+# ── Opsiyonel: /advise ucunda gerçek LLM ──────────────────────────────────
+# Kurulu değilse /advise yine cevap verir: deterministik kural tabanlı motora
+# düşer. Halka açık bir API'de anahtar taşımamak bilinçli tercih — isteyen
+# kendi ortamında açar.
+# anthropic>=0.40              -> ANTHROPIC_API_KEY
+# google-generativeai>=0.7     -> GOOGLE_API_KEY

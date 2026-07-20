@@ -1,0 +1,32 @@
+# Cash Guard API — Render Blueprint
+#
+# Bu dosya depoda durduğu sürece Render'da "New → Blueprint" deyip depoyu
+# seçmek yeterli; aşağıdaki ayarları elle girmek gerekmez.
+#
+# Ücretsiz katman notu: servis ~15 dk trafiksiz kalınca uyur, ilk istek
+# uyandırma yüzünden yavaştır (~30 sn). Demo için sorun değil; /health ucu
+# tam da bu yüzden var (uyandırmak ve sağlık kontrolü için ucuz bir uç).
+services:
+  - type: web
+    name: cash-guard-api
+    runtime: python
+    plan: free
+    region: frankfurt          # Türkiye'ye en yakın ücretsiz bölge
+
+    # Arayüz yığını BİLEREK yok: bu dosya streamlit/plotly/reportlab çekmez.
+    # Sınırı tests/test_api.py bekçilik ediyor (import'ları fiilen engelleyerek).
+    buildCommand: pip install -r requirements-api.txt
+
+    # $PORT'u Render atar; sabit port yazmak servisi ayağa kaldırmaz.
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+
+    healthCheckPath: /health
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13"
+      # /advise ucu anahtarsız da çalışır (kural tabanlı motora düşer).
+      # Gerçek LLM istersen requirements-api.txt'teki ilgili satırı aç ve
+      # anahtarı Render panelinden buraya ekle — depoya yazma.
+      # - key: GOOGLE_API_KEY
+      #   sync: false

@@ -151,6 +151,59 @@ def test_api_and_engine_agree():
     assert uzerinden["ruin_probability"] == dogrudan.ruin_probability
 
 
+def test_api_arayuz_yigini_olmadan_ayaga_kalkar():
+    """
+    API'nin dağıtımı yalın kalmalı: streamlit / plotly / reportlab kurulu
+    olmasa da ayağa kalkabilmeli. (pandas ve numpy hariç — onları motorun
+    kendisi kullanıyor, arayüz bağımlılığı değiller.)
+
+    Ölçülmüş bir sınır: ai_cfo.py biçimlendirme için utils.theme'i çağırıyordu,
+    o da modül seviyesinde streamlit import ediyordu — yani HTTP API sırf para
+    birimi yazdırmak için koca bir arayüz çatısı kuruyordu. Saf biçimlendirme
+    utils/format.py'ye alındı.
+
+    Engelleyici `find_spec` kullanır: `find_module`/`load_module` Python 3.12'de
+    kaldırıldı ve sessizce hiçbir şey engellemez — o haliyle yazılan bir test
+    her koşulda yeşil yanar, yani hiçbir şeyi korumaz.
+    """
+    if not _API_VAR:
+        return
+
+    yasak = {"streamlit", "plotly", "reportlab"}
+
+    class _Engel:
+        def find_spec(self, ad, yol=None, hedef=None):
+            if ad.split(".")[0] in yasak:
+                raise ImportError(f"{ad} bu testte bilerek engellendi")
+            return None
+
+    engel = _Engel()
+
+    # Zinciri sıfırdan kurmak için hem proje modüllerini HEM DE yasaklı
+    # paketleri sys.modules'ten düşür. Yasaklıları düşürmezsek import onları
+    # önbellekten bulur, find_spec'e hiç uğramaz ve test her koşulda yeşil
+    # yanar — yani hiçbir şeyi korumaz.
+    def _ilgili(ad: str) -> bool:
+        kok = ad.split(".")[0]
+        return (ad == "api" or ad.startswith(("modules", "utils"))
+                or kok in yasak)
+
+    onceki = {a: m for a, m in sys.modules.items() if _ilgili(a)}
+    for ad in onceki:
+        del sys.modules[ad]
+    sys.meta_path.insert(0, engel)
+    try:
+        import api as taze_api
+        assert taze_api.app is not None
+        yollar = {r.path for r in taze_api.app.routes if hasattr(r, "path")}
+        assert {"/health", "/simulate", "/loan", "/advise"} <= yollar
+    finally:
+        sys.meta_path.remove(engel)
+        for ad in [a for a in sys.modules if _ilgili(a)]:
+            del sys.modules[ad]
+        sys.modules.update(onceki)
+
+
 if __name__ == "__main__":
     if not _API_VAR:
         print("  fastapi kurulu değil — API testleri atlandı")

@@ -22,7 +22,9 @@ import os
 import re
 from dataclasses import dataclass
 
-from utils.theme import expense_label, money
+# utils.theme DEĞİL: o modül streamlit'i modül seviyesinde import ediyor ve
+# bu dosyayı HTTP API de kullanıyor. Biçimlendirme için arayüz çatısı gerekmez.
+from utils.format import expense_label, money
 
 # ── Model kimlikleri ──────────────────────────────────────────────────────
 # Sağlayıcılar model adlarını sık değiştiriyor ve kodun içine gömülü bir ad

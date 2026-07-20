@@ -172,6 +172,18 @@ uvicorn api:app --reload
 # http://localhost:8000/docs  → otomatik arayüz
 ```
 
+**Dağıtım yalın tutuldu.** `requirements-api.txt` arayüz yığınını (streamlit,
+plotly, reportlab) çekmez — API'nin hiçbirine ihtiyacı yok. Bu bir tercih
+beyanı değil, testle korunan bir sınır: `tests/test_api.py` o paketlerin
+import'unu fiilen engelleyip API'nin yine de ayağa kalktığını doğruluyor.
+Sınırı korumak için saf biçimlendirme `utils/format.py`'ye alındı; `utils/theme.py`
+streamlit'e bağlı olduğundan motor tarafından çağrılmaz.
+
+**Yayına almak (Render, ücretsiz):** depoda `render.yaml` hazır. Render'da
+**New → Blueprint** → bu depoyu seç → deploy. Elle ayar girmen gerekmez.
+Ücretsiz katmanda servis ~15 dk trafiksiz kalınca uyur; ilk istek onu
+uyandırdığı için yavaştır (`/health` bunun için ucuz bir uç).
+
 | Uç nokta | Ne yapar |
 |---|---|
 | `GET /health` | Servis ayakta mı |
