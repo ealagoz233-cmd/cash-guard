@@ -1,11 +1,20 @@
 """
 test_app_wiring.py — Arayüz kablolaması gerçekten bağlı mı?
 
-test_store.py defterin MANTIĞINI koruyor (tekrar eden ad, tavan, bozuk dosya).
-Burada korunan başka bir şey: o mantığın app.py'ye DOĞRU bağlanmış olması.
-İkisi ayrı hata sınıfı — store.kaydet() kusursuz çalışırken butonun yanlış
-değişkeni göndermesi ya da tablonun hiç çizilmemesi mümkündür ve birim
-testleri bunu görmez.
+Diğer test dosyaları modüllerin MANTIĞINI koruyor: test_store.py defteri
+(tekrar eden ad, tavan, bozuk dosya), test_scenario.py URL'de taşınan
+senaryoyu (kırpma, çöp parametre). Burada korunan başka bir şey: o mantığın
+app.py'ye DOĞRU bağlanmış olması.
+
+İkisi ayrı hata sınıfı. store.kaydet() kusursuz çalışırken butonun yanlış
+değişkeni göndermesi, ya da from_query_params() doğru ayrıştırırken sonucun
+sürgüye hiç verilmemesi mümkündür — modül testleri ikisini de görmez, ikisi
+de kullanıcıya bozuk bir ürün olarak çıkar.
+
+Kapsanan iki zincir:
+  URL -> sürgü -> motor -> defter tablosu   (paylaşılan link doğru senaryoyu
+                                             gösteriyor ve kaydedilebiliyor)
+  sürgü -> URL                              (paylaşılan link güncel)
 
 Streamlit'in kendi AppTest motoruyla app.py baştan sona koşturulur; tarayıcı
 yok, bu yüzden CI'da da güvenilir. (Tarayıcıdan doğrulama denendi ve
@@ -30,11 +39,21 @@ _KAYITLI_AD = "Tarayıcı testi · 15M kredi"
 _onbellek = {}
 
 
-def _uygulama():
+def _uygulama(**qp):
+    """Uygulamayı koştur. Adlandırılmış argümanlar URL parametresi olur."""
     at = AppTest.from_file(_APP, default_timeout=_TIMEOUT)
+    for k, v in qp.items():
+        at.query_params[k] = str(v)
     at.run()
     assert not at.exception, f"uygulama açılışta patladı: {at.exception}"
     return at
+
+
+def _surgu(at, parca):
+    for s in at.slider:
+        if parca in s.label:
+            return s
+    raise AssertionError(f"'{parca}' sürgüsü yok. Mevcut: {[s.label for s in at.slider]}")
 
 
 def _buton(at, parca):
@@ -127,6 +146,54 @@ def test_silme_kaydi_gercekten_dusurur():
     _buton(at, "Sil").click().run()
     assert not at.exception, f"silme patladı: {at.exception}"
     assert not at.dataframe, "silmeden sonra tablo hâlâ duruyor"
+
+
+def test_url_surguleri_gercekten_oynatir():
+    """
+    Paylaşılan linkin tek vaadi bu: karşı taraf AYNI senaryoyu görsün.
+    scenario.py'nin ayrıştırması test_scenario.py'de; burada o sonucun
+    sürgülere bağlandığını doğruluyoruz.
+    """
+    at = _uygulama(kredi=0, vade=60, faiz=7.5)
+    assert _surgu(at, "Kredi Miktarı").value == 0
+    assert _surgu(at, "Vade").value == 60
+    assert _surgu(at, "Faiz").value == 7.5
+
+
+def test_bozuk_url_uygulamayi_cokertmez():
+    """
+    Adres çubuğu internetteki herkesin elinde. Çöp parametre uygulamayı
+    çökertmemeli; sürgüler geçerli aralıkta kalmalı.
+    """
+    at = _uygulama(kredi="abc", vade=-999, faiz="", bilinmeyen="x")
+    assert not at.exception, f"bozuk URL patlattı: {at.exception}"
+    kredi = _surgu(at, "Kredi Miktarı")
+    assert kredi.value >= 0, f"sürgü geçersiz değere düştü: {kredi.value}"
+    assert _surgu(at, "Vade").value >= 6
+
+
+def test_surgu_oynatinca_url_guncellenir():
+    """
+    Link paylaşılabilir olsun diye durum adres çubuğuna yazılıyor. Sürgü
+    oynayıp URL eski kalırsa kullanıcı yanlış senaryoyu paylaşır.
+    """
+    at = _uygulama()
+    _surgu(at, "Vade").set_value(48).run()
+    assert not at.exception
+    assert dict(at.query_params).get("vade") in ("48", ["48"]), \
+        f"URL güncellenmedi: {dict(at.query_params)}"
+
+
+def test_urlden_gelen_senaryo_deftere_dogru_kaydedilir():
+    """
+    İki özelliğin kesiştiği yer: linkle gelen senaryoyu kaydetmek. Zincirin
+    (URL -> sürgü -> motor -> defter) herhangi bir halkası kopsa tablo
+    varsayılan krediyi gösterirdi.
+    """
+    at = _kaydet(_uygulama(kredi=0, vade=60), "Kredisiz · linkten")
+    satir = at.dataframe[0].value.iloc[0]
+    assert satir["Senaryo"] == "Kredisiz · linkten"
+    assert satir["Kredi"] == 0, f"URL'deki kredi deftere ulaşmadı: {satir['Kredi']}"
 
 
 if __name__ == "__main__":
