@@ -255,6 +255,41 @@ def test_anahtar_varken_sessiz_kalmaz():
         _geri_yukle(onceki)
 
 
+def test_ilk_saglayici_patlarsa_digerine_duser():
+    """
+    Gerçek senaryonun testi: Secrets'ta kredisi bitmiş bir ANTHROPIC_API_KEY ve
+    çalışan bir GOOGLE_API_KEY birlikte duruyor. Claude patlayınca zincir
+    Gemini'ye düşmeli — kural tabanlı motora DEĞİL, çünkü hâlâ çalışan bir
+    sağlayıcı var.
+    """
+    onceki = _claude_kurulu(dict(_ANAHTARSIZ,
+                                 ANTHROPIC_API_KEY="kredisiz",
+                                 GOOGLE_API_KEY="calisan"))
+    eski_sdk = getattr(ai_cfo, "genai", None)
+    eski_bayraklar = (ai_cfo._HAS_CLAUDE, ai_cfo._HAS_GEMINI)
+    ai_cfo._HAS_CLAUDE = ai_cfo._HAS_GEMINI = True
+
+    def _patlayan(*a, **k):
+        raise RuntimeError("credit balance is too low")
+
+    ai_cfo.genai = types.SimpleNamespace(
+        configure=lambda **k: None,
+        GenerativeModel=lambda *a, **k: types.SimpleNamespace(
+            generate_content=lambda p: types.SimpleNamespace(text="Gemini planı")),
+    )
+    eski_claude = ai_cfo.RuthlessCFO._ask_claude
+    ai_cfo.RuthlessCFO._ask_claude = _patlayan
+    try:
+        sonuc = RuthlessCFO().advise(_ctx())
+        assert sonuc.source == "Gemini", f"zincir Gemini'ye düşmedi: {sonuc.source}"
+        assert sonuc.reason is None, "çalışan sağlayıcı varken uyarı çıktı"
+    finally:
+        ai_cfo.RuthlessCFO._ask_claude = eski_claude
+        ai_cfo.genai = eski_sdk
+        ai_cfo._HAS_CLAUDE, ai_cfo._HAS_GEMINI = eski_bayraklar
+        _geri_yukle(onceki)
+
+
 def test_sebep_metni_anahtari_sizdirmaz():
     """
     Sebep arayüze çıkıyor. Sağlayıcı bir gün anahtarı hata metnine koyarsa

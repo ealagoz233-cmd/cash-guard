@@ -16,11 +16,14 @@ reportlab>=4.0     # yönetim kuruluna sunulacak PDF rapor üretimi
 # paket kurulur, kullanılmaz, fallback devrededir.
 anthropic>=0.40                # -> ANTHROPIC_API_KEY (önerilen)
 
-# Diğer sağlayıcılar isteğe bağlı; birden fazlası tanımlıysa sıra:
-# Claude -> OpenAI -> Gemini. Model adları CG_CLAUDE_MODEL / CG_OPENAI_MODEL /
-# CG_GEMINI_MODEL ile ezilebilir.
+# Gemini de açık, çünkü ücretsiz katmanı var: aistudio.google.com'dan kart
+# vermeden anahtar alınıp GOOGLE_API_KEY olarak Secrets'a konabiliyor. Claude
+# kredi ister; bu, demoyu gerçek bir LLM'le koşturmanın parasız yolu.
+google-generativeai>=0.7       # -> GOOGLE_API_KEY (veya GEMINI_API_KEY)
+
+# Birden fazla anahtar tanımlıysa deneme sırası: Claude -> OpenAI -> Gemini.
+# Model adları CG_CLAUDE_MODEL / CG_OPENAI_MODEL / CG_GEMINI_MODEL ile ezilir.
 # openai>=1.30                 -> OPENAI_API_KEY
-# google-generativeai>=0.7     -> GOOGLE_API_KEY (veya GEMINI_API_KEY)
 
 # ── Opsiyonel: Test ───────────────────────────────────────────────────────
 # Testler pytest OLMADAN da koşar (her dosyada __main__ bloğu var):
