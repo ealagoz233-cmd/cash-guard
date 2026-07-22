@@ -312,7 +312,7 @@ cash-guard/
 │   ├── format.py                # Arayüzden bağımsız biçimlendirme (motor kullanır)
 │   ├── theme.py                 # "War-room" karanlık tema, KPI kartları, CSS
 │   └── performance_utils.py     # Numba/NumPy nakit yolu çekirdeği
-├── tests/                       # 107 test, 9 dosya
+├── tests/                       # 111 test, 10 dosya
 │   ├── test_finance_math.py     # Kredi matematiği + Monte Carlo değişmezleri
 │   ├── test_runway.py           # Statik/trend runway, Theil–Sen dayanıklılığı
 │   ├── test_data_integrity.py   # Mock veri tutarlılığı + yükleme dayanıklılığı
@@ -321,7 +321,8 @@ cash-guard/
 │   ├── test_store.py            # Defter sözleşmesi: kayıp yok, bozuk dosya çökertmez
 │   ├── test_scenario.py         # URL'de taşınan senaryonun dayanıklılığı
 │   ├── test_api.py              # HTTP uçları + motorla aynı sayıyı verdiği
-│   └── test_app_wiring.py       # Arayüz kablolaması (Streamlit AppTest)
+│   ├── test_app_wiring.py       # Arayüz kablolaması (Streamlit AppTest)
+│   └── test_docs.py             # README'nin verdiği sayılar bayatlamasın
 ├── data/
 │   └── mock_company_data.json   # Uygulama boş açılmasın diye sahte şirket
 ├── .streamlit/config.toml       # Karanlık tema temel ayarları
@@ -361,13 +362,20 @@ python -m pytest tests/ -q          # pytest ile
 python tests/test_finance_math.py   # ya da tek tek, bağımlılıksız
 ```
 
-**39 test**, üç dosyada:
+**111 test**, on dosyada:
 
 | Dosya | Neyi korur |
 |-------|-----------|
+| `test_data_integrity.py` (21) | Mock verinin ortalamalarının skalerlerle birebir tutması, kasa yürüyüşünün sapmasız olması, eksik sütunlu CSV'nin uygulamayı çökertmemesi, Türkçe/Excel biçimlerinin okunması, Türkçe etiketler |
 | `test_finance_math.py` (19) | Annüite formülü elle hesaplanmış değerle; itfa tablosunda anapara toplamı = kredi ve vade sonu bakiye = 0; Monte Carlo değişmezleri (olasılık aralığı, tohum tekrarlanabilirliği, yüzdelik bantların sıralaması, "stres artınca batma olasılığı düşemez"); **vektörize çekirdeğin naif referans döngüyle birebir eşitliği** |
+| `test_app_wiring.py` (14) | Arayüz kablolaması: Streamlit `AppTest` ile uçtan uca kaydetme, geri yükleme ve paylaşılabilir link akışı |
+| `test_ai_cfo.py` (11) | Sağlayıcı sırası ve hataya karşı bir sonrakine geçiş, anahtarsız kural tabanlı motora düşüş, teşhis mesajı, anahtarın çıktıya sızmaması |
+| `test_report.py` (10) | PDF gerçekten üretiliyor mu, Türkçe karakter için font seçimi ve para birimi kararı |
+| `test_api.py` (9) | HTTP uçlarının sözleşmesi, girdi doğrulama ve iterasyon tavanı, **API'nin motorla aynı sayıyı vermesi**, arayüz yığını import edilemezken bile ayağa kalkması |
+| `test_store.py` (9) | Senaryo defteri sözleşmesi: kayıt kaybolmaz, bozuk JSON uygulamayı çökertmez |
 | `test_runway.py` (8) | Statik/trend runway ayrışması, Theil–Sen'in aykırı değere dayanıklılığı, yetersiz veride güvenli geri çekilme |
-| `test_data_integrity.py` (12) | Mock verinin ortalamalarının skalerlerle birebir tutması, kasa yürüyüşünün sapmasız olması, eksik sütunlu CSV'nin uygulamayı çökertmemesi, Türkçe etiketler |
+| `test_scenario.py` (7) | URL'de taşınan senaryonun tur gidiş-dönüşü, bozuk/eksik parametrede varsayılana düşme |
+| `test_docs.py` (3) | README'nin kendi hakkında verdiği test sayılarının bayatlamaması |
 
 En kritik test `test_vectorized_kernel_matches_reference`: Monte Carlo çekirdeği
 performans için `cumsum`/`argmax` hilesi kullanır ve bu hile sessizce yanlış
