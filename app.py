@@ -27,6 +27,7 @@ import streamlit as st
 
 from modules import loan_simulator as ls
 from modules import monte_carlo as mc
+from modules import receivables
 from modules import scenario
 from modules import sensitivity
 from modules import store
@@ -222,13 +223,15 @@ net_op = avg_collections - avg_exp                           # faaliyet NAKİT a
 #  HESAPLAMALAR
 # ══════════════════════════════════════════════════════════════════════════
 # Modül 1 — kredi simülasyonu (deterministik). Nakit girişi = tahsilat.
-scenario = ls.LoanScenario(
+# Adı bilerek `scenario` DEĞİL: o ad `modules.scenario` modülüne ait ve burada
+# yeniden bağlanınca modül bu satırdan sonra erişilemez hâle geliyordu.
+loan_scn = ls.LoanScenario(
     current_cash=current_cash, monthly_revenue=avg_collections,
     monthly_fixed_expense=avg_exp, existing_debt_service=debt_service,
     loan_amount=loan_amount, loan_term_months=loan_term,
     monthly_interest_rate=interest, horizon_months=24,
 )
-loan_res = ls.simulate(scenario)
+loan_res = ls.simulate(loan_scn)
 
 # Modül 2 — Monte Carlo. MEVCUT iş modelini (yeni kredi OLMADAN) stres testine
 # sokar: "bugünkü halimle 12 ayda batma olasılığım ne?" Kredinin etkisi Modül
@@ -446,6 +449,96 @@ if recv:
         yaxis=dict(autorange="reversed"), font=dict(color=COLORS["text"]))
     st.plotly_chart(figr, width="stretch")
 
+# ── Yaşlandırmayı nakit modeline bağla ────────────────────────────────────
+# Yaşlandırma bugüne kadar sadece bir grafikti: ekranda duruyor, hiçbir hesabı
+# beslemiyordu. Gecikme tek bir sürgüyle giriliyordu — yani 92 gün gecikmiş
+# 3,15 milyonluk müşteri ile zamanında ödeyen bir defter aynı sürgüye düşüyordu.
+aging = receivables.age(
+    recv,
+    total_outstanding=data.get("receivables_outstanding"),
+    monthly_revenue=avg_rev,                       # DSO faturalanan gelire göre
+    declared_collection_days=data.get("avg_collection_days"),
+)
+
+if aging.total > 0:
+    a1, a2, a3 = st.columns(3)
+    with a1:
+        st.markdown(theme.kpi_card(
+            "Alacak Devir Günü (DSO)",
+            f"{aging.dso:.0f} gün" if aging.dso else "—",
+            f"Bakiye {money(aging.total, sym)} ÷ aylık faturalanan gelir",
+            accent=COLORS["alarm"] if aging.dso and aging.dso > 60
+            else COLORS["amber"] if aging.dso and aging.dso > 45 else COLORS["guardian"],
+        ), unsafe_allow_html=True)
+    with a2:
+        st.markdown(theme.kpi_card(
+            "Muhtemelen Hiç Gelmeyecek",
+            money(aging.expected_loss, sym),
+            f"Defterin %{aging.expected_loss_share * 100:.0f}'i — yaşlandırma "
+            f"karşılık oranlarıyla",
+            accent=COLORS["alarm"],
+        ), unsafe_allow_html=True)
+    with a3:
+        st.markdown(theme.kpi_card(
+            "Vadesi Geçmiş Pay",
+            f"%{aging.overdue_share * 100:.0f}",
+            f"Ağırlıklı ortalama {aging.weighted_overdue_days:.0f} gün gecikme",
+            accent=threat_color(aging.overdue_share * 100),
+        ), unsafe_allow_html=True)
+
+    st.caption(
+        "**Gecikme ≠ kayıp.** Geciken para sonunda gelir, şüpheli alacak hiç "
+        "gelmez. Yukarıdaki tahmin, kova başına yerleşik karşılık oranlarıyla "
+        "(vadesinde %2 → 90+ gün %50) hesaplanır; kendi tahsilat geçmişin varsa "
+        "bu oranlar değiştirilmelidir."
+    )
+
+    # Yaşlandırma ile bakiye birbirini tutmuyorsa sus-pus geçme.
+    if aging.dso_conflict:
+        st.warning(
+            f"⚠️ **Veri tutarsızlığı:** Yaşlandırma listesi alacakların ortalama "
+            f"**{aging.weighted_overdue_days:.0f} gün** vadesini aştığını söylüyor, "
+            f"ama bakiyeden hesaplanan DSO yalnızca **{aging.dso:.0f} gün**. İkisi "
+            f"aynı anda doğru olamaz: ya bakiye eksik ya da yaşlandırma listesi "
+            f"defterin tamamını temsil etmiyor. Aşağıdaki türetilmiş sürgüleri "
+            f"kullanmadan önce bu farkı çöz."
+        )
+
+    # ── Sürgü karşılıkları + tek tıkla uygula ─────────────────────────────
+    imp = receivables.implied_stress(aging)
+    imp_gecikme, imp_kayan = imp.as_slider_percents
+    farkli = (imp_gecikme, imp_kayan) != (senaryo["gecikme"], senaryo["kayan"])
+
+    u1, u2 = st.columns([3, 1])
+    with u1:
+        st.markdown(
+            f'<div style="border-left:3px solid {COLORS["guardian"]};'
+            f'background:{COLORS["panel"]};padding:12px 16px;border-radius:10px;'
+            f'font-size:14px;color:{COLORS["text"]};">'
+            f'📐 <b>Yaşlandırmadan türetilen gecikme profili:</b> bu defterle bir '
+            f'ayın tahsilatının <b>%{imp.expected_slip_rate * 100:.0f}</b>\'inin '
+            f'gelecek aydan sonraya sarkması bekleniyor. Sürgü karşılığı: '
+            f'gecikme olasılığı <b>%{imp_gecikme}</b>, kayan tahsilat '
+            f'<b>%{imp_kayan}</b> (şu an %{senaryo["gecikme"]} / '
+            f'%{senaryo["kayan"]}).'
+            f'</div>', unsafe_allow_html=True)
+    with u2:
+        st.write("")
+        if st.button("📐 Sürgülere uygula", width="stretch", disabled=not farkli,
+                     help="Stres sürgülerini yaşlandırmadan türetilen değerlere çeker"):
+            hedef = dict(senaryo, gecikme=imp_gecikme, kayan=imp_kayan)
+            st.query_params.clear()
+            st.query_params.update(scenario.to_query_params(hedef))
+            st.rerun()
+
+    if imp.clamped:
+        st.caption(
+            f"⚠️ Türetilen kayma (%{imp.expected_slip_rate * 100:.0f}) sürgülerin "
+            f"taşıyabileceğinin (%{imp.achievable_slip_rate * 100:.0f}) üstünde; "
+            f"değerler tavana kırpıldı. Yani sürgüleri uygulasan bile simülasyon "
+            f"bu defterden **daha iyimser** kalır."
+        )
+
 
 # ══════════════════════════════════════════════════════════════════════════
 #  MODÜL 1 — KREDİ KURTARIR MI?
@@ -454,7 +547,7 @@ theme.section("Kredi Kurtarır mı? — Borç Tuzağı Tahmini", chip="MODÜL 1"
 # İki modül bilerek FARKLI ufuklara ve yöntemlere bakıyor; bu ekranda yazmayınca
 # "%94 batma" ile "20. ayda iflas" çelişkili görünüyordu. Varsayımı açıkça yaz.
 st.caption(
-    f"**{scenario.horizon_months} aylık deterministik projeksiyon.** Tahsilat "
+    f"**{loan_scn.horizon_months} aylık deterministik projeksiyon.** Tahsilat "
     f"({money(avg_collections, sym)}/ay) ve gider ({money(avg_exp, sym)}/ay) sabit "
     f"varsayılır, rastgelelik yoktur. Cevapladığı soru: *kredi çekersem kasa eğrisi "
     f"ne zaman sıfırı deler?* — yani **zamanlama**."
@@ -538,7 +631,7 @@ st.caption(
     f"**12 aylık stokastik simülasyon** — {tr_num(n_iter)} senaryo, her ayın geliri ve "
     f"gideri sürgülerdeki şoklarla rastgele çekilir. Cevapladığı soru: *bugünkü halimle "
     f"batma **olasılığım** ne?* Ufku Modül 1'den kısa (12 ay vs "
-    f"{scenario.horizon_months} ay) ve krediyi hesaba katmaz — kredinin etkisi aşağıdaki "
+    f"{loan_scn.horizon_months} ay) ve krediyi hesaba katmaz — kredinin etkisi aşağıdaki "
     f"senaryo karşılaştırmasında ayrıca koşulur."
 )
 
@@ -868,6 +961,11 @@ cfo_ctx = {
     "default_without_loan": loan_res["default_without_loan"],
     "top_receivables": data.get("top_receivables", []),
     "expense_breakdown": data.get("expense_breakdown", {}),
+    # Yaşlandırmadan türeyenler: CFO "gecikmiş" ile "hiç gelmeyecek" arasındaki
+    # farkı ancak bu sayıları görürse kurabilir.
+    "expected_uncollectible": round(aging.expected_loss) if aging.total else None,
+    "dso_days": round(aging.dso) if aging.dso else None,
+    "overdue_share": round(aging.overdue_share, 3) if aging.total else None,
 }
 
 # "Yeniden çağır" yalnızca GERÇEK bir LLM varsa anlamlı: kural tabanlı motor

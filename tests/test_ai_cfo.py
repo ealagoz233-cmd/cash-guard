@@ -222,6 +222,32 @@ _ANAHTARSIZ = {"ANTHROPIC_API_KEY": None, "OPENAI_API_KEY": None,
                "GOOGLE_API_KEY": None, "GEMINI_API_KEY": None}
 
 
+def test_rule_engine_separates_late_money_from_lost_money():
+    """
+    Yaşlandırmadan gelen şüpheli alacak, "geç geliyor" ile aynı şey değil ve
+    plan bunu ayrı bir madde olarak söylemeli — aksi halde kullanıcı gelmeyecek
+    parayı bütçede tutmaya devam eder.
+    """
+    onceki = _claude_kurulu(_ANAHTARSIZ)
+    try:
+        ctx = _ctx() | {"expected_uncollectible": 2_728_000, "dso_days": 39}
+        metin = RuthlessCFO().advise(ctx).text
+        assert "2.728.000" in metin, "şüpheli alacak tutarı planda geçmiyor"
+        assert "39" in metin, "DSO planda geçmiyor"
+    finally:
+        _geri_yukle(onceki)
+
+
+def test_rule_engine_stays_silent_when_there_is_no_aging_data():
+    """Veri yoksa uydurma: alan gelmediğinde madde hiç kurulmamalı."""
+    onceki = _claude_kurulu(_ANAHTARSIZ)
+    try:
+        metin = RuthlessCFO().advise(_ctx()).text
+        assert "muhtemelen hiç gelmeyecek" not in metin.lower()
+    finally:
+        _geri_yukle(onceki)
+
+
 def test_anahtarsiz_kurulum_uyari_gostermez():
     """
     Anahtarsız çalışmak bir arıza DEĞİL, halka açık demonun bilinçli

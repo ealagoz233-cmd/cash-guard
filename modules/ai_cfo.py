@@ -394,6 +394,19 @@ Bu tabloya göre patrona teşhis + numaralı aksiyon planı yaz."""
                     f"var. Hepsine 7 günlük son ödeme protokolü gönderin, ödemeyene faktoring uygulayın."
                 )
 
+        # a2) Şüpheli alacak: "geç geliyor" ile "hiç gelmeyecek" aynı şey değil
+        supheli = ctx.get("expected_uncollectible")
+        dso = ctx.get("dso_days")
+        if supheli and supheli > 0:
+            dso_cumle = (f" Alacak devir gününüz {dso:.0f}; her gün kısaltma "
+                         f"doğrudan kasaya para demek." if dso else "")
+            actions.append(
+                f"Yaşlandırmaya göre bu alacakların **{money(supheli, sym)}'i "
+                f"muhtemelen hiç gelmeyecek** — bu bir gecikme değil, kayıp. Bu tutarı "
+                f"bugün karşılık ayırıp planlarınızdan DÜŞÜN; gelmeyecek parayı bütçede "
+                f"tutmak, olmayan nakde göre karar vermektir.{dso_cumle}"
+            )
+
         # b) En şişkin gider kaleminden kes
         if breakdown:
             # pazarlama gibi 'kısılabilir' kalemi öne al, yoksa en büyüğü

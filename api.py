@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from modules import loan_simulator as ls
 from modules import monte_carlo as mc
+from modules import receivables
 from modules import sensitivity
 from modules.ai_cfo import RuthlessCFO
 from modules.runway import static_runway
@@ -98,6 +99,24 @@ class KrediIstegi(BaseModel):
     horizon_months: int = Field(24, ge=1, le=360)
 
 
+class AlacakKalemi(BaseModel):
+    """Tek bir alacak kalemi."""
+    customer: str = "—"
+    amount: float = Field(..., ge=0)
+    overdue_days: float = Field(0, description="Vadeyi aşan gün; negatif = vadesi gelmemiş")
+
+
+class YaslandirmaIstegi(BaseModel):
+    """Alacak yaşlandırma analizi girdileri."""
+    receivables: list[AlacakKalemi] = Field(default_factory=list)
+    total_outstanding: float | None = Field(
+        None, ge=0, description="Defterin toplam bakiyesi; kalemlerden büyükse "
+                                "fark 'listelenmemiş' sayılır")
+    monthly_revenue: float | None = Field(
+        None, ge=0, description="DSO için aylık FATURALANAN gelir (tahsilat değil)")
+    declared_collection_days: float | None = None
+
+
 class TavsiyeIstegi(BaseModel):
     """CFO aksiyon planı için analiz bağlamı."""
     current_cash: float
@@ -172,6 +191,54 @@ def duyarlilik(istek: DuyarlilikIstegi) -> dict:
             }
             for i in sonuc.impacts
         ],
+    }
+
+
+@app.post("/receivables", tags=["Analiz"],
+          summary="Alacak yaşlandırma — DSO, şüpheli alacak, türetilmiş sürgüler")
+def yaslandirma(istek: YaslandirmaIstegi) -> dict:
+    """
+    Alacak defterini yaşlandırıp üç şey döndürür: **DSO** (bakiye ÷ aylık
+    faturalanan gelir × 30), **beklenen tahsil edilememe** (kova başına yerleşik
+    karşılık oranlarıyla) ve stres sürgülerinin **yaşlandırmadan türetilmiş**
+    karşılıkları.
+
+    `implied.clamped` doğruysa defter sürgülerin taşıyabileceğinden daha
+    bozuktur; o değerlerle koşulan simülasyon gerçekten daha iyimser olur.
+    `dso_conflict` doğruysa yaşlandırma ile bakiye birbirini tutmuyordur —
+    türetilmiş değerleri kullanmadan önce veriyi düzeltmek gerekir.
+    """
+    profil = receivables.age(
+        [k.model_dump() for k in istek.receivables],
+        total_outstanding=istek.total_outstanding,
+        monthly_revenue=istek.monthly_revenue,
+        declared_collection_days=istek.declared_collection_days,
+    )
+    turetilen = receivables.implied_stress(profil)
+    return {
+        "total": profil.total,
+        "listed_amount": profil.listed_amount,
+        "unlisted_amount": profil.unlisted_amount,
+        "expected_loss": profil.expected_loss,
+        "expected_loss_share": profil.expected_loss_share,
+        "overdue_amount": profil.overdue_amount,
+        "overdue_share": profil.overdue_share,
+        "weighted_overdue_days": profil.weighted_overdue_days,
+        "dso": profil.dso,
+        "dso_conflict": profil.dso_conflict,
+        "buckets": [
+            {"name": r.name, "amount": r.amount, "share": r.share,
+             "loss_rate": r.loss_rate, "expected_loss": r.expected_loss,
+             "lag_months": r.lag_months}
+            for r in profil.rows
+        ],
+        "implied": {
+            "delay_prob": turetilen.delay_prob,
+            "delay_severity": turetilen.delay_severity,
+            "expected_slip_rate": turetilen.expected_slip_rate,
+            "achievable_slip_rate": turetilen.achievable_slip_rate,
+            "clamped": turetilen.clamped,
+        },
     }
 
 

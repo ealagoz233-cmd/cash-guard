@@ -123,6 +123,41 @@ def test_sensitivity_has_a_lower_iteration_cap():
     assert client.post("/sensitivity", json=tam).status_code == 200
 
 
+def test_receivables_endpoint_matches_the_engine():
+    """
+    Yaşlandırma da motorun bir parçası: HTTP katmanı kendi hesabını yapmaya
+    başlarsa arayüz ile API aynı defter için farklı şüpheli alacak gösterir.
+    """
+    if not _API_VAR:
+        return
+    from modules import receivables as rc
+
+    defter = [{"customer": "A", "amount": 3_000_000, "overdue_days": 120},
+              {"customer": "B", "amount": 1_000_000, "overdue_days": 10}]
+    y = client.post("/receivables", json={
+        "receivables": defter, "total_outstanding": 4_000_000,
+        "monthly_revenue": 2_000_000,
+    })
+    assert y.status_code == 200, y.text
+    d = y.json()
+    dogrudan = rc.age(defter, 4_000_000, 2_000_000)
+    assert d["expected_loss"] == dogrudan.expected_loss
+    assert d["dso"] == dogrudan.dso
+    assert len(d["buckets"]) == len(rc.DEFAULT_BUCKETS)
+    assert set(d["implied"]) == {"delay_prob", "delay_severity", "expected_slip_rate",
+                                 "achievable_slip_rate", "clamped"}
+
+
+def test_receivables_endpoint_survives_an_empty_book():
+    """Boş defter geçerli bir girdi: 422 değil, sıfırlı bir profil dönmeli."""
+    if not _API_VAR:
+        return
+    y = client.post("/receivables", json={"receivables": []})
+    assert y.status_code == 200, y.text
+    assert y.json()["total"] == 0
+    assert y.json()["dso_conflict"] is False
+
+
 def test_loan_endpoint_returns_json_serialisable_numbers():
     """
     Motor içeride numpy dizileri de üretiyor; bunlar JSON'a çevrilemez.
@@ -224,7 +259,8 @@ def test_api_arayuz_yigini_olmadan_ayaga_kalkar():
         import api as taze_api
         assert taze_api.app is not None
         yollar = {r.path for r in taze_api.app.routes if hasattr(r, "path")}
-        assert {"/health", "/simulate", "/sensitivity", "/loan", "/advise"} <= yollar
+        assert {"/health", "/simulate", "/sensitivity", "/receivables",
+                "/loan", "/advise"} <= yollar
     finally:
         sys.meta_path.remove(engel)
         for ad in [a for a in sys.modules if _ilgili(a)]:
