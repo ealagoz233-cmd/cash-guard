@@ -199,6 +199,34 @@ def test_mock_company_book_is_fully_itemised():
     assert p.expected_loss > 0
 
 
+def test_mock_company_balance_and_aging_do_not_contradict_each_other():
+    """
+    Demo verisi kendi tutarsızlık kontrolünü TETİKLEMEMELİ.
+
+    Vitrin uygulaması kendi örnek verisi hakkında sarı uyarıyla açılmamalı;
+    kontrol gerçek yüklemeler için var. Üç sayı birbirine bağlı: bakiye, aylık
+    faturalanan gelir ve kalem tutarları. Biri değişip diğerleri kalırsa bu test
+    kırılır — kontrolün bozulduğu için değil, demo verisinin ayrıştığı için.
+    """
+    d = load_mock()
+    p = age(d["top_receivables"], d["receivables_outstanding"],
+            d["avg_monthly_revenue"], d.get("avg_collection_days"))
+    assert not p.dso_conflict, (
+        f"demo verisi çelişkili: DSO {p.dso:.1f} gün ama yaşlandırma "
+        f"{p.weighted_overdue_days:.1f} gün gecikme diyor")
+
+
+def test_mock_company_dso_equals_the_declared_collection_days():
+    """
+    `avg_collection_days` alanı elle yazılmış bir iddia; bakiyeden hesaplanan
+    DSO ile aynı çıkmalı, yoksa dosyada birbirini tutmayan iki sayı olur.
+    """
+    d = load_mock()
+    p = age(d["top_receivables"], d["receivables_outstanding"],
+            d["avg_monthly_revenue"])
+    assert abs(p.dso - d["avg_collection_days"]) < 0.5
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

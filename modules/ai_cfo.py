@@ -412,7 +412,7 @@ Bu tabloya göre patrona teşhis + numaralı aksiyon planı yaz."""
         z_bolge = ctx.get("z_zone")
         if z_skor is not None and z_bolge == "Güvenli" and ruin >= 60:
             actions.append(
-                f"Bilançonuz sizi rahatlatmasın: Altman skoru **{z_skor}** ile güvenli "
+                f"Bilançonuz sizi rahatlatmasın: Altman skoru **{z_skor:.2f}** ile güvenli "
                 f"bölgede, yani kâğıt üstünde kârlı ve sermayeniz sağlam görünüyor. O "
                 f"model yıllık bir fotoğraf çeker, paranın NE ZAMAN geldiğini görmez. "
                 f"Şirketler tam olarak böyle batar — bankaya bu skoru göstererek değil, "
@@ -420,7 +420,7 @@ Bu tabloya göre patrona teşhis + numaralı aksiyon planı yaz."""
             )
         elif z_skor is not None and z_bolge == "Tehlike":
             actions.append(
-                f"Altman skorunuz **{z_skor}** — tarihsel olarak batan şirketlerle aynı "
+                f"Altman skorunuz **{z_skor:.2f}** — tarihsel olarak batan şirketlerle aynı "
                 f"bölgedesiniz. Bu, nakit sıkışıklığından ayrı ve daha derin bir sorun: "
                 f"sermaye yapınız borcu taşıyamıyor. Nakit önlemleri kanamayı yavaşlatır "
                 f"ama yapıyı onarmaz; sermaye artırımı ya da borç yeniden yapılandırması "
