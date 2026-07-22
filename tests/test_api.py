@@ -158,6 +158,47 @@ def test_receivables_endpoint_survives_an_empty_book():
     assert y.json()["dso_conflict"] is False
 
 
+def test_weekly_endpoint_matches_the_engine():
+    if not _API_VAR:
+        return
+    from modules import weekly as wk
+
+    govde = {
+        "current_cash": 4_200_000, "monthly_collections": 6_800_000,
+        "monthly_fixed_expense": 5_950_000, "monthly_debt_service": 950_000,
+        "expense_breakdown": {"personel": 2_650_000, "kira_ve_isletme": 780_000,
+                              "hammadde_ve_tedarik": 2_520_000},
+        "as_of": "2026-06-30",
+    }
+    y = client.post("/weekly", json=govde)
+    assert y.status_code == 200, y.text
+    d = y.json()
+    assert len(d["weeks"]) == wk.DEFAULT_WEEKS
+    assert d["informative"] is True
+
+    dogrudan = wk.build(
+        current_cash=govde["current_cash"],
+        monthly_collections=govde["monthly_collections"],
+        expense_breakdown=govde["expense_breakdown"],
+        monthly_fixed_expense=govde["monthly_fixed_expense"],
+        monthly_debt_service=govde["monthly_debt_service"],
+        start=wk.parse_start("2026-06-30"))
+    assert d["end_cash"] == dogrudan.end_cash
+    assert d["intramonth_gap"] == dogrudan.intramonth_gap
+
+
+def test_weekly_endpoint_admits_when_it_adds_nothing():
+    """Gider dağılımı yoksa uç bunu bildirmeli — sessiz kalmak güven yaratırdı."""
+    if not _API_VAR:
+        return
+    y = client.post("/weekly", json={
+        "current_cash": 1_000_000, "monthly_collections": 500_000,
+        "monthly_fixed_expense": 400_000,
+    })
+    assert y.status_code == 200, y.text
+    assert y.json()["informative"] is False
+
+
 def test_zscore_endpoint_matches_the_engine():
     if not _API_VAR:
         return
@@ -296,7 +337,7 @@ def test_api_arayuz_yigini_olmadan_ayaga_kalkar():
         assert taze_api.app is not None
         yollar = {r.path for r in taze_api.app.routes if hasattr(r, "path")}
         assert {"/health", "/simulate", "/sensitivity", "/receivables",
-                "/zscore", "/loan", "/advise"} <= yollar
+                "/weekly", "/zscore", "/loan", "/advise"} <= yollar
     finally:
         sys.meta_path.remove(engel)
         for ad in [a for a in sys.modules if _ilgili(a)]:

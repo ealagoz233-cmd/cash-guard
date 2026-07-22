@@ -24,6 +24,7 @@ from modules import loan_simulator as ls
 from modules import monte_carlo as mc
 from modules import receivables
 from modules import sensitivity
+from modules import weekly
 from modules import zscore
 from modules.ai_cfo import RuthlessCFO
 from modules.runway import static_runway
@@ -116,6 +117,24 @@ class YaslandirmaIstegi(BaseModel):
     monthly_revenue: float | None = Field(
         None, ge=0, description="DSO için aylık FATURALANAN gelir (tahsilat değil)")
     declared_collection_days: float | None = None
+
+
+class HaftalikIstek(BaseModel):
+    """
+    13 haftalık likidite tablosu girdileri.
+
+    `expense_breakdown` verilmezse tüm gider aya eşit yayılır ve tablo ay-içi
+    bilgi taşımaz; cevaptaki `informative` alanı bunu bildirir.
+    """
+    current_cash: float = Field(..., ge=0)
+    monthly_collections: float = Field(..., ge=0, description="Aylık TAHSİLAT")
+    monthly_fixed_expense: float = Field(..., ge=0)
+    monthly_debt_service: float = Field(0, ge=0)
+    expense_breakdown: dict[str, float] | None = Field(
+        None, description="Kalem adı → aylık tutar; ödeme günleri kalem adından bulunur")
+    as_of: str | None = Field(None, description="Veri tarihi (YYYY-AA-GG); "
+                                                "projeksiyon ertesi gün başlar")
+    weeks: int = Field(weekly.DEFAULT_WEEKS, ge=1, le=52)
 
 
 class ZSkorIstegi(BaseModel):
@@ -258,6 +277,48 @@ def yaslandirma(istek: YaslandirmaIstegi) -> dict:
             "achievable_slip_rate": turetilen.achievable_slip_rate,
             "clamped": turetilen.clamped,
         },
+    }
+
+
+@app.post("/weekly", tags=["Analiz"],
+          summary="13 haftalık likidite ufku — ay-içi nakit çukurları")
+def haftalik(istek: HaftalikIstek) -> dict:
+    """
+    Aylık toplamları bir nakit takvimine dağıtıp haftalık kasa yolunu verir.
+    Aylık model ayın en kritik gününü ortalamanın altında saklar; bu uç onu
+    görünür kılar.
+
+    `intramonth_gap`, dönem sonu kasası ile en dip hafta arasındaki farktır —
+    yani aylık bakışın GÖREMEDİĞİ derinlik. `informative` yanlışsa gider
+    dağılımı verilmemiş demektir ve eğri, aylık çizginin ince hâlinden ibarettir.
+    """
+    plan = weekly.build(
+        current_cash=istek.current_cash,
+        monthly_collections=istek.monthly_collections,
+        expense_breakdown=istek.expense_breakdown,
+        monthly_fixed_expense=istek.monthly_fixed_expense,
+        monthly_debt_service=istek.monthly_debt_service,
+        start=weekly.parse_start(istek.as_of),
+        weeks=istek.weeks,
+    )
+    dip, ilk_eksi = plan.min_week, plan.first_negative
+    return {
+        "opening_cash": plan.opening_cash,
+        "end_cash": plan.end_cash,
+        "informative": plan.informative,
+        "dated_items": plan.dated_items,
+        "intramonth_gap": plan.intramonth_gap,
+        "min_week": None if dip is None else {
+            "index": dip.index, "start": dip.start.isoformat(),
+            "closing_cash": dip.closing_cash},
+        "first_negative_week": None if ilk_eksi is None else {
+            "index": ilk_eksi.index, "start": ilk_eksi.start.isoformat()},
+        "weeks": [
+            {"index": w.index, "start": w.start.isoformat(),
+             "end": w.end.isoformat(), "inflow": w.inflow,
+             "outflow": w.outflow, "net": w.net, "closing_cash": w.closing_cash}
+            for w in plan.weeks
+        ],
     }
 
 

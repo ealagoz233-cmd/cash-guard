@@ -31,6 +31,7 @@ from modules import receivables
 from modules import scenario
 from modules import sensitivity
 from modules import store
+from modules import weekly
 from modules import zscore
 from modules.ai_cfo import RuthlessCFO
 from modules import data_io
@@ -713,6 +714,130 @@ else:
     c3.metric("Kredinin Öteleme Etkisi", f"+{relief} ay",
               delta="Sadece morfin" if relief <= 6 else "Nefes aralığı",
               delta_color="inverse")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  13 HAFTALIK LİKİDİTE UFKU — ay-içi nakit çukurları
+# ══════════════════════════════════════════════════════════════════════════
+# Modül 1 ve 2 AYLIK bakar; aylık ortalama, ayın en kritik gününü ortalamanın
+# altında saklar. Ay artıda kapansa bile maaş günü kasa dibi görebilir.
+# Kurumsal likidite kontrolünün fiili standardı bu yüzden 13 haftalık tablodur.
+theme.section("13 Haftalık Likidite Ufku — Ayın Hangi Günü Dara Düşüyorsun?",
+              chip="HAFTALIK")
+
+hafta_basi = weekly.parse_start(data.get("as_of"))
+wk = weekly.build(
+    current_cash=current_cash,
+    monthly_collections=avg_collections,
+    expense_breakdown=data.get("expense_breakdown"),
+    monthly_fixed_expense=avg_exp,
+    monthly_debt_service=debt_service,
+    start=hafta_basi,
+)
+# Kredili karşılığı: baştan +kredi nakdi, her ay +taksit yükü.
+wk_loan = weekly.build(
+    current_cash=current_cash + loan_amount,
+    monthly_collections=avg_collections,
+    expense_breakdown=data.get("expense_breakdown"),
+    monthly_fixed_expense=avg_exp,
+    monthly_debt_service=debt_service + loan_res["installment"],
+    start=hafta_basi,
+) if loan_amount > 0 else None
+
+st.caption(
+    f"**{len(wk.weeks)} haftalık nakit takvimi** ({wk.weeks[0].start:%d.%m.%Y} – "
+    f"{wk.weeks[-1].end:%d.%m.%Y}). Aylık toplamlar güne dağıtılır: kira ayın "
+    f"1'i, maaş 5'i, kredi taksiti 15'i, enerji/lojistik 20'si; hammadde, "
+    f"pazarlama ve **tahsilat** aya eşit yayılır. Tahsilatın yayılması bilinçli "
+    f"olarak nötr bir varsayımdır — gerçek tahsilat takvimi bilinmiyorken onu "
+    f"tek güne yığmak, olmayan bir bilgiyi varmış gibi göstermek olurdu."
+)
+
+if not wk.informative:
+    # Her şey aya yayılmışsa haftalık eğri, aylık çizginin ince çizilmiş hâlidir.
+    st.info(
+        "ℹ️ Yüklediğin veride gider dağılımı yok, bu yüzden tüm çıkışlar aya "
+        "eşit yayıldı. Aşağıdaki eğri aylık çizginin daha ince çizilmiş hâli — "
+        "**ay-içi çukur bilgisi taşımıyor.** Maaş/kira gibi kalemleri ayrı ayrı "
+        "verirsen bu tablo asıl işini yapar."
+    )
+
+dip = wk.min_week
+etiketler = [f"H{w.index}<br>{w.start:%d.%m}" for w in wk.weeks]
+
+figw = go.Figure()
+figw.add_trace(go.Bar(
+    x=etiketler, y=[w.inflow for w in wk.weeks], name="Haftalık tahsilat",
+    marker_color="rgba(0,224,164,0.32)",
+    hovertemplate="%{x}: " + sym + "%{y:,.0f}<extra>Giriş</extra>"))
+figw.add_trace(go.Bar(
+    x=etiketler, y=[-w.outflow for w in wk.weeks], name="Haftalık çıkış",
+    marker_color="rgba(255,59,71,0.38)",
+    hovertemplate="%{x}: " + sym + "%{y:,.0f}<extra>Çıkış</extra>"))
+figw.add_trace(go.Scatter(
+    x=etiketler, y=[w.closing_cash for w in wk.weeks], name="Hafta sonu kasa",
+    mode="lines+markers", line=dict(color=COLORS["guardian"], width=3),
+    hovertemplate="%{x}: " + sym + "%{y:,.0f}<extra>Kasa</extra>"))
+if wk_loan is not None:
+    figw.add_trace(go.Scatter(
+        x=etiketler, y=[w.closing_cash for w in wk_loan.weeks],
+        name=f"{money(loan_amount, sym)} kredi çekilirse", mode="lines",
+        line=dict(color=COLORS["amber"], width=2, dash="dash"),
+        hovertemplate="%{x}: " + sym + "%{y:,.0f}<extra>Kredili</extra>"))
+figw.add_hline(y=0, line=dict(color=COLORS["alarm"], width=1.5, dash="dot"))
+if dip is not None:
+    figw.add_annotation(
+        x=f"H{dip.index}<br>{dip.start:%d.%m}", y=dip.closing_cash,
+        text=f"en dip: {money(dip.closing_cash, sym)}",
+        showarrow=True, arrowhead=2, ay=38, arrowcolor=COLORS["amber"],
+        font=dict(color=COLORS["amber"], size=12))
+figw.update_layout(
+    template="plotly_dark", height=420, barmode="relative",
+    title=dict(text="Haftalık nakit hareketi ve kasa yolu", x=0, xanchor="left",
+               font=dict(size=15)),
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    margin=dict(l=10, r=10, t=44, b=60),
+    xaxis=dict(gridcolor=COLORS["grid"], tickfont=dict(size=10)),
+    yaxis=dict(title=f"Tutar ({sym})", gridcolor=COLORS["grid"], zeroline=False),
+    legend=dict(orientation="h", yanchor="top", y=-0.18, x=0),
+    font=dict(color=COLORS["text"]))
+st.plotly_chart(figw, width="stretch")
+
+w1, w2, w3 = st.columns(3)
+with w1:
+    st.markdown(theme.kpi_card(
+        "En Dip Hafta", f"H{dip.index} · {dip.start:%d.%m}" if dip else "—",
+        f"Hafta sonu kasa {money(dip.closing_cash, sym)}" if dip else "",
+        accent=COLORS["alarm"] if dip and dip.closing_cash < 0
+        else COLORS["amber"] if dip and dip.closing_cash < current_cash * 0.5
+        else COLORS["guardian"]), unsafe_allow_html=True)
+with w2:
+    st.markdown(theme.kpi_card(
+        "Aylık Modelin Göremediği Derinlik", money(wk.intramonth_gap, sym),
+        "Dönem sonu kasası ile en dip hafta arasındaki fark",
+        accent=COLORS["amber"]), unsafe_allow_html=True)
+with w3:
+    ilk_eksi = wk.first_negative
+    st.markdown(theme.kpi_card(
+        "13 Hafta İçinde Kasa Eksiye Düşüyor mu?",
+        f"Evet · H{ilk_eksi.index}" if ilk_eksi else "Hayır",
+        f"{ilk_eksi.start:%d.%m.%Y} haftası" if ilk_eksi
+        else "Bu ufukta nakit tükenmiyor",
+        accent=COLORS["alarm"] if ilk_eksi else COLORS["guardian"]),
+        unsafe_allow_html=True)
+
+if wk.informative and dip is not None:
+    st.markdown(
+        f'<div style="border-left:3px solid {COLORS["amber"]};'
+        f'background:{COLORS["panel"]};padding:12px 16px;border-radius:10px;'
+        f'margin-top:12px;font-size:14px;color:{COLORS["text"]};">'
+        f'📅 <b>Aylık bakınca görünmeyen an.</b> Dönem sonunda kasa '
+        f'<b>{money(wk.end_cash, sym)}</b> görünüyor, ama {dip.start:%d.%m.%Y} '
+        f'haftasında <b>{money(dip.closing_cash, sym)}</b>\'ye iniyor — aradaki '
+        f'<b>{money(wk.intramonth_gap, sym)}</b> aylık ortalamanın içinde kaybolan '
+        f'gerçek bir daralmadır. Kredi limiti, teminat ve tedarikçi vadesi '
+        f'pazarlıkları ay sonuna değil <b>bu haftaya</b> göre kurulmalı.'
+        f'</div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════
