@@ -158,6 +158,31 @@ def test_receivables_endpoint_survives_an_empty_book():
     assert y.json()["dso_conflict"] is False
 
 
+def test_loan_sweep_endpoint_reports_both_horizons():
+    """
+    Uç, yalnızca batma olasılığını döndürseydi tüketici tarafında "en düşük
+    riskli tutarı öner" diye yanlış bir kullanım kaçınılmaz olurdu. İki ufuk
+    birlikte dönmeli.
+    """
+    if not _API_VAR:
+        return
+    y = client.post("/loan-sweep", json=_SIRKET | {
+        "income_drop": 0.06, "volatility": 0.10, "delay_prob": 0.30,
+        "delay_severity": 0.25, "expense_inflation": 0.10,
+        "loan_term_months": 24, "monthly_interest_rate": 0.035, "steps": 7,
+    })
+    assert y.status_code == 200, y.text
+    d = y.json()
+    assert len(d["points"]) == 7
+    assert d["points"][0]["amount"] == 0
+    for p in d["points"]:
+        assert "ruin_probability" in p and "relief_months" in p
+    # Demo şirketinde kredi 12 ayı rahatlatır ama iflası öne çeker
+    assert d["borrowing_helps"] is True
+    assert d["best_is_a_trap"] is True
+    assert d["best"]["relief_months"] < 0
+
+
 def test_weekly_endpoint_matches_the_engine():
     if not _API_VAR:
         return
@@ -337,7 +362,8 @@ def test_api_arayuz_yigini_olmadan_ayaga_kalkar():
         assert taze_api.app is not None
         yollar = {r.path for r in taze_api.app.routes if hasattr(r, "path")}
         assert {"/health", "/simulate", "/sensitivity", "/receivables",
-                "/weekly", "/zscore", "/loan", "/advise"} <= yollar
+                "/weekly", "/zscore", "/loan", "/loan-sweep",
+                "/advise"} <= yollar
     finally:
         sys.meta_path.remove(engel)
         for ad in [a for a in sys.modules if _ilgili(a)]:

@@ -21,6 +21,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from modules import loan_simulator as ls
+from modules import loan_sweep
 from modules import monte_carlo as mc
 from modules import receivables
 from modules import sensitivity
@@ -99,6 +100,20 @@ class KrediIstegi(BaseModel):
     loan_term_months: int = Field(..., ge=1, le=360)
     monthly_interest_rate: float = Field(..., ge=0, le=1)
     horizon_months: int = Field(24, ge=1, le=360)
+
+
+class TaramaIstegi(SimulasyonIstegi):
+    """
+    Kredi tutarı taraması girdileri: stres testine ek olarak vade ve faiz.
+
+    `n_iter` tavanı düşük tutuldu (bkz. MAX_ITER_SENSITIVITY): tek istek adım
+    sayısı kadar simülasyon koşar.
+    """
+    n_iter: int = Field(10_000, ge=100, le=MAX_ITER_SENSITIVITY)
+    loan_term_months: int = Field(24, ge=1, le=360)
+    monthly_interest_rate: float = Field(0.035, ge=0, le=1)
+    max_amount: float = Field(loan_sweep.DEFAULT_MAX_AMOUNT, gt=0)
+    steps: int = Field(loan_sweep.DEFAULT_STEPS, ge=2, le=41)
 
 
 class AlacakKalemi(BaseModel):
@@ -277,6 +292,59 @@ def yaslandirma(istek: YaslandirmaIstegi) -> dict:
             "achievable_slip_rate": turetilen.achievable_slip_rate,
             "clamped": turetilen.clamped,
         },
+    }
+
+
+@app.post("/loan-sweep", tags=["Analiz"],
+          summary="Kredi tutarı taraması — 'çekeyim mi' değil, 'kaç lira'")
+def kredi_taramasi(istek: TaramaIstegi) -> dict:
+    """
+    Kredi tutarını sıfırdan üst sınıra tarar ve her tutar için iki ufku birden
+    döndürür: **12 aylık batma olasılığı** (stokastik) ve **iflasın ötelenmesi**
+    (deterministik, işaretli).
+
+    `best_is_a_trap` doğruysa 12 aylık riski en aza indiren tutar, uzun vadede
+    iflası ÖNE çekiyordur. Yalnızca `ruin_probability`'ye bakıp öneri üretmeyin —
+    nakit enjeksiyonu ilk 12 ayı neredeyse her zaman rahatlatır, taksit sonra
+    vurur. Bu uç, o hatayı yapmamak için iki sütunu birlikte veriyor.
+    """
+    girdi = istek.model_dump()
+    vade = girdi.pop("loan_term_months")
+    faiz = girdi.pop("monthly_interest_rate")
+    ust = girdi.pop("max_amount")
+    adim = girdi.pop("steps")
+
+    stres = mc.StressParams(**girdi)
+    sablon = ls.LoanScenario(
+        current_cash=stres.current_cash, monthly_revenue=stres.monthly_revenue,
+        monthly_fixed_expense=stres.monthly_fixed_expense,
+        existing_debt_service=stres.monthly_debt_service,
+        loan_amount=0.0, loan_term_months=vade,
+        monthly_interest_rate=faiz, horizon_months=24,
+    )
+    sonuc = loan_sweep.sweep(stres, sablon, max_amount=ust, steps=adim)
+    en_iyi = sonuc.best
+    return {
+        "n_iter": sonuc.n_iter,
+        "baseline_probability": sonuc.baseline.ruin_probability if sonuc.baseline else None,
+        "gain_pp": sonuc.gain_pp,
+        "borrowing_helps": sonuc.borrowing_helps,
+        "best_is_a_trap": sonuc.best_is_a_trap,
+        "best": None if en_iyi is None else {
+            "amount": en_iyi.amount, "installment": en_iyi.installment,
+            "ruin_probability": en_iyi.ruin_probability,
+            "relief_months": en_iyi.relief_months,
+            "total_interest": en_iyi.total_interest,
+        },
+        "points": [
+            {"amount": p.amount, "installment": p.installment,
+             "total_interest": p.total_interest,
+             "ruin_probability": p.ruin_probability,
+             "relief_months": p.relief_months,
+             "default_with_loan": p.default_with_loan,
+             "is_trap": p.is_trap}
+            for p in sonuc.points
+        ],
     }
 
 

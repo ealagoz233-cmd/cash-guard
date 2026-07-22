@@ -26,6 +26,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from modules import loan_simulator as ls
+from modules import loan_sweep
 from modules import monte_carlo as mc
 from modules import receivables
 from modules import scenario
@@ -68,6 +69,18 @@ def run_tornado(**kwargs) -> sensitivity.TornadoResult:
     koşmaması önemli.
     """
     return sensitivity.tornado(mc.StressParams(**kwargs))
+
+
+@st.cache_data(show_spinner="Kredi tutarları taranıyor…")
+def run_loan_sweep(stress: dict, loan: dict) -> loan_sweep.SweepResult:
+    """
+    Kredi tutarı taramasını önbelleğe alır.
+
+    Parametreler dataclass yerine sözlük olarak alınıyor: `st.cache_data`
+    anahtarı argümanlardan üretir ve sözlük hem hash'lenebilir hem de içeriği
+    değişince anahtarı gerçekten değiştirir.
+    """
+    return loan_sweep.sweep(mc.StressParams(**stress), ls.LoanScenario(**loan))
 
 
 @st.cache_data(show_spinner=False)
@@ -728,6 +741,92 @@ else:
     c3.metric("Kredinin Öteleme Etkisi", f"+{relief} ay",
               delta="Sadece morfin" if relief <= 6 else "Nefes aralığı",
               delta_color="inverse")
+
+# ── Kredi tutarı taraması: "çekeyim mi" değil, "KAÇ LİRA" ─────────────────
+# Yukarısı tek bir tutarı sınıyor. Asıl karar iki katmanlı ve ikinci katman
+# sürgüyü elle 12 kez oynatarak aranıyordu; aradaki eğri hiç görünmüyordu.
+st.write("")
+sweep_res = run_loan_sweep(
+    stress=dict(
+        current_cash=current_cash, monthly_revenue=avg_collections,
+        monthly_fixed_expense=avg_exp, monthly_debt_service=debt_service,
+        income_drop=income_drop, volatility=volatility, delay_prob=delay_prob,
+        delay_severity=delay_sev, expense_inflation=exp_infl,
+        months=12, n_iter=int(n_iter), seed=42),
+    loan=dict(
+        current_cash=current_cash, monthly_revenue=avg_collections,
+        monthly_fixed_expense=avg_exp, existing_debt_service=debt_service,
+        loan_amount=0.0, loan_term_months=loan_term,
+        monthly_interest_rate=interest, horizon_months=24),
+)
+
+x_tutar = [p.amount for p in sweep_res.points]
+figs = go.Figure()
+figs.add_trace(go.Scatter(
+    x=x_tutar, y=[p.ruin_pct for p in sweep_res.points],
+    name="12 ay batma olasılığı (%)", mode="lines+markers",
+    line=dict(color=COLORS["guardian"], width=3),
+    hovertemplate=sym + "%{x:,.0f} → %%{y:.1f}<extra>12 ay</extra>"))
+figs.add_trace(go.Bar(
+    x=x_tutar, y=[p.relief_months for p in sweep_res.points],
+    name="İflasın ötelenmesi (ay)", yaxis="y2", opacity=0.55,
+    marker_color=[COLORS["guardian_dim"] if p.relief_months >= 0 else COLORS["alarm"]
+                  for p in sweep_res.points],
+    hovertemplate=sym + "%{x:,.0f} → %{y:+d} ay<extra>Uzun vade</extra>"))
+figs.add_vline(x=loan_amount, line=dict(color=COLORS["amber"], width=1.5, dash="dot"),
+               annotation_text="şu anki sürgü", annotation_font_color=COLORS["amber"])
+figs.update_layout(
+    template="plotly_dark", height=380,
+    title=dict(text="Kredi tutarı taraması — kısa vadeli rahatlama vs. uzun vadeli yük",
+               x=0, xanchor="left", font=dict(size=15)),
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    margin=dict(l=10, r=10, t=44, b=60),
+    xaxis=dict(title=f"Çekilen kredi ({sym})", gridcolor=COLORS["grid"]),
+    yaxis=dict(title="12 ay batma (%)", gridcolor=COLORS["grid"],
+               ticksuffix="%", rangemode="tozero"),
+    # Çift eksen burada dürüst: biri yüzde, diğeri ay. (Kasa grafiğinde
+    # kaçınılmıştı çünkü orada üç iz de aynı birimdeydi.)
+    yaxis2=dict(title="Öteleme (ay)", overlaying="y", side="right",
+                gridcolor="rgba(0,0,0,0)", zeroline=True,
+                zerolinecolor=COLORS["muted"]),
+    legend=dict(orientation="h", yanchor="top", y=-0.2, x=0),
+    font=dict(color=COLORS["text"]))
+st.plotly_chart(figs, width="stretch")
+
+# ── Taramanın sözlü hükmü ─────────────────────────────────────────────────
+_en_iyi = sweep_res.best
+if _en_iyi is None:
+    pass
+elif sweep_res.best_is_a_trap:
+    # Asıl mesaj bu: yalnızca 12 aylık olasılığa bakan bir "optimizasyon",
+    # uygulamanın uyardığı hatanın ta kendisini yapardı.
+    st.markdown(
+        f'<div style="border-left:3px solid {COLORS["alarm"]};'
+        f'background:{COLORS["panel"]};padding:14px 18px;border-radius:10px;'
+        f'font-size:14px;color:{COLORS["text"]};">'
+        f'🪤 <b>Eğrinin söylediği şey bir tavsiye değil, bir tuzak tarifi.</b> '
+        f'12 aylık batma olasılığını en aza indiren tutar '
+        f'<b>{money(_en_iyi.amount, sym)}</b> ve riski '
+        f'%{sweep_res.baseline.ruin_pct:.1f}\'den <b>%{_en_iyi.ruin_pct:.1f}</b>\'e '
+        f'düşürüyor. Ama aynı tutar iflası <b>{abs(_en_iyi.relief_months)} ay ÖNE '
+        f'çekiyor</b> ve {money(_en_iyi.total_interest, sym)} faiz yükü bindiriyor. '
+        f'Nakit enjeksiyonu ilk 12 ayı neredeyse her zaman rahatlatır; taksit '
+        f'sonra vurur. Kırmızı barlar büyüdükçe kaçış penceresi kapanıyor — '
+        f'"en düşük risk" burada en pahalı seçenek.'
+        f'</div>', unsafe_allow_html=True)
+elif sweep_res.borrowing_helps:
+    st.success(
+        f"✅ Bu tabloda kredi gerçekten işe yarıyor: **{money(_en_iyi.amount, sym)}** "
+        f"12 aylık riski %{sweep_res.baseline.ruin_pct:.1f} → **%{_en_iyi.ruin_pct:.1f}** "
+        f"yapıyor ve iflası **{_en_iyi.relief_months} ay ötelıyor**. Kazanılan süreyi "
+        f"nakit üretimini onarmak için kullan; yoksa o da erir."
+    )
+else:
+    st.info(
+        f"ℹ️ Hiçbir kredi tutarı 12 aylık riski anlamlı biçimde "
+        f"(≥{loan_sweep.MEANINGFUL_GAIN_PP} puan) düşürmüyor. Sorun nakit "
+        f"miktarı değil, nakit ÜRETİMİ — borçlanmak bu tabloyu değiştirmez."
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════
