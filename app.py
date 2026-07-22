@@ -35,7 +35,8 @@ from modules import weekly
 from modules import zscore
 from modules.ai_cfo import RuthlessCFO
 from modules import data_io
-from modules.data_io import REQUIRED_HISTORY_COLS, load_mock, parse_uploaded
+from modules.data_io import (REQUIRED_HISTORY_COLS, load_mock,
+                             parse_uploaded_files)
 from modules.report import build_report
 from modules.runway import static_runway, trend_runway
 from utils import theme
@@ -114,8 +115,10 @@ st.sidebar.markdown("### 📁 Veri Kaynağı")
 upload = st.sidebar.file_uploader(
     "Kendi verini yükle (CSV/Excel) — opsiyonel",
     type=["csv", "xlsx", "xls"],
-    help="Biçim A: 'alan,deger' sütunları. Biçim B: month, revenue, fixed_expense, "
-         "collections, cash_end sütunlu aylık tablo.",
+    accept_multiple_files=True,
+    help="Birden fazla dosya yükleyebilirsin; hepsi tek şirkette birleşir. "
+         "Biçim A: 'alan,deger'. Biçim B: month, revenue, fixed_expense, "
+         "collections, cash_end. Biçim C: musteri, tutar, gecikme_gun.",
 )
 
 # Şablon, yükleyicinin hemen altında duruyor: biçimi öğrenmek için README'ye
@@ -131,17 +134,28 @@ upload = st.sidebar.file_uploader(
 # alıp özelliği yoklayınca, en kötü ihtimalle bu buton görünmez; uygulama ayakta
 # kalır ve bir sonraki yeniden başlatmada kendiliğinden düzelir.
 _sablon_uret = getattr(data_io, "ornek_sablon", None)
+_alacak_sablon_uret = getattr(data_io, "ornek_alacak_sablonu", None)
 if _sablon_uret is not None:
-    st.sidebar.download_button(
-        "⬇️ Örnek şablon (CSV)",
+    sb1, sb2 = st.sidebar.columns(2)
+    sb1.download_button(
+        "⬇️ Şablon",
         data=_sablon_uret(),
         file_name="cash_guard_sablon.csv",
         mime="text/csv",
         width="stretch",
-        help="İndir, kendi rakamlarınla doldur, yukarıdan yükle.",
+        help="Skalerler + bilanço + gider dağılımı. İndir, doldur, yükle.",
     )
+    if _alacak_sablon_uret is not None:
+        sb2.download_button(
+            "⬇️ Alacaklar",
+            data=_alacak_sablon_uret(),
+            file_name="cash_guard_alacaklar.csv",
+            mime="text/csv",
+            width="stretch",
+            help="Alacak yaşlandırma listesi. Diğer şablonla BİRLİKTE yüklenebilir.",
+        )
 
-data = parse_uploaded(upload) if upload else load_mock()
+data = parse_uploaded_files(upload) if upload else load_mock()
 if data is None:
     data = load_mock()
 
