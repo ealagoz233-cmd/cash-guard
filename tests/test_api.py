@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from fastapi.testclient import TestClient
 
-    from api import MAX_ITER, app
+    from api import MAX_ITER, MAX_ITER_SENSITIVITY, app
 
     client = TestClient(app)
     _API_VAR = True
@@ -93,6 +93,34 @@ def test_invalid_input_is_rejected_not_crashed():
     for govde in kotu:
         y = client.post("/simulate", json=govde)
         assert y.status_code == 422, f"{govde} icin 422 bekleniyordu, {y.status_code} geldi"
+
+
+def test_sensitivity_endpoint_ranks_the_drivers():
+    if not _API_VAR:
+        return
+    y = client.post("/sensitivity", json=_SIRKET)
+    assert y.status_code == 200, y.text
+    d = y.json()
+    assert 0.0 <= d["base_probability"] <= 1.0
+    surgular = d["drivers"]
+    assert len(surgular) == 5
+    # Sıralama sözleşmesi: drivers[0] en büyük kaldıraç olmalı.
+    swings = [abs(s["swing"]) for s in surgular]
+    assert swings == sorted(swings, reverse=True)
+
+
+def test_sensitivity_has_a_lower_iteration_cap():
+    """
+    Bu uç tek istekte ~11 simülasyon koşar; /simulate'in tavanını aynen
+    uygulamak yarım milyon senaryoluk tek istek demek olurdu.
+    """
+    if not _API_VAR:
+        return
+    assert MAX_ITER_SENSITIVITY < MAX_ITER
+    ust = _SIRKET | {"n_iter": MAX_ITER_SENSITIVITY + 1}
+    assert client.post("/sensitivity", json=ust).status_code == 422
+    tam = _SIRKET | {"n_iter": MAX_ITER_SENSITIVITY}
+    assert client.post("/sensitivity", json=tam).status_code == 200
 
 
 def test_loan_endpoint_returns_json_serialisable_numbers():
@@ -196,7 +224,7 @@ def test_api_arayuz_yigini_olmadan_ayaga_kalkar():
         import api as taze_api
         assert taze_api.app is not None
         yollar = {r.path for r in taze_api.app.routes if hasattr(r, "path")}
-        assert {"/health", "/simulate", "/loan", "/advise"} <= yollar
+        assert {"/health", "/simulate", "/sensitivity", "/loan", "/advise"} <= yollar
     finally:
         sys.meta_path.remove(engel)
         for ad in [a for a in sys.modules if _ilgili(a)]:

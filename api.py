@@ -22,12 +22,17 @@ from pydantic import BaseModel, Field
 
 from modules import loan_simulator as ls
 from modules import monte_carlo as mc
+from modules import sensitivity
 from modules.ai_cfo import RuthlessCFO
 from modules.runway import static_runway
 
 # Tek bir istekle sunucuyu meşgul etmeyi engelleyen tavan. Arayüzdeki en
 # yüksek seçenek 50.000; API'de de aynı sınır geçerli.
 MAX_ITER = 50_000
+
+# /sensitivity tek istekte ~11 simülasyon koşar. Aynı tavanı uygularsak bir
+# istek 550.000 senaryo demek olur; bu uç için tavan bilerek daha düşük.
+MAX_ITER_SENSITIVITY = 20_000
 
 app = FastAPI(
     title="Cash Guard API",
@@ -67,6 +72,18 @@ class SimulasyonIstegi(BaseModel):
     months: int = Field(12, ge=1, le=120)
     n_iter: int = Field(10_000, ge=100, le=MAX_ITER)
     seed: int | None = Field(42, description="Aynı tohum = aynı sonuç")
+
+
+class DuyarlilikIstegi(SimulasyonIstegi):
+    """
+    Tornado analizi girdileri: stres testiyle aynı, artı oynatma adımı.
+
+    `n_iter` tavanı burada daha düşük (bkz. MAX_ITER_SENSITIVITY): tek istek
+    sürgü sayısı × 2 + 1 simülasyon koşturur.
+    """
+    n_iter: int = Field(10_000, ge=100, le=MAX_ITER_SENSITIVITY)
+    delta: float = Field(sensitivity.DEFAULT_DELTA, gt=0, le=0.5,
+                         description="Her sürgünün ± oynatılacağı miktar (0.05 = 5 puan)")
 
 
 class KrediIstegi(BaseModel):
@@ -121,6 +138,40 @@ def simulate(istek: SimulasyonIstegi) -> dict:
         "acceleration": sonuc.acceleration,
         "monthly_net": aylik_net,
         "runway_months": static_runway(istek.current_cash, aylik_net),
+    }
+
+
+@app.post("/sensitivity", tags=["Analiz"],
+          summary="Duyarlılık (tornado) — hangi sürgü riski en çok oynatıyor")
+def duyarlilik(istek: DuyarlilikIstegi) -> dict:
+    """
+    Tornado analizi: her stres sürgüsü tek tek ±`delta` oynatılır, diğerleri
+    sabit tutulur ve batma olasılığındaki değişim ölçülür. Sonuç etkiye göre
+    büyükten küçüğe sıralı döner; `drivers[0]` en büyük kaldıraçtır.
+
+    Bütün koşular aynı tohumu paylaşır, dolayısıyla `swing` Monte Carlo
+    gürültüsü değil parametrenin kendi etkisidir.
+    """
+    girdi = istek.model_dump()
+    delta = girdi.pop("delta")
+    sonuc = sensitivity.tornado(mc.StressParams(**girdi), delta=delta)
+    return {
+        "base_probability": sonuc.base_probability,
+        "delta": sonuc.delta,
+        "n_iter": sonuc.n_iter,
+        "drivers": [
+            {
+                "key": i.key,
+                "label": i.label,
+                "low_value": i.low_value,
+                "high_value": i.high_value,
+                "low_probability": i.low_probability,
+                "high_probability": i.high_probability,
+                "swing": i.swing,
+                "negligible": i.negligible,
+            }
+            for i in sonuc.impacts
+        ],
     }
 
 

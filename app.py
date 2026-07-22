@@ -28,6 +28,7 @@ import streamlit as st
 from modules import loan_simulator as ls
 from modules import monte_carlo as mc
 from modules import scenario
+from modules import sensitivity
 from modules import store
 from modules.ai_cfo import RuthlessCFO
 from modules import data_io
@@ -53,6 +54,16 @@ theme.inject_css()
 def run_monte_carlo(**kwargs) -> mc.StressResult:
     """StressParams'ı kurup mc.run çağırır. kwargs sayesinde cache anahtarı net."""
     return mc.run(mc.StressParams(**kwargs))
+
+
+@st.cache_data(show_spinner="Sürgülerin etkisi tek tek ölçülüyor…")
+def run_tornado(**kwargs) -> sensitivity.TornadoResult:
+    """
+    Duyarlılık analizini önbelleğe alır. Maliyeti tek Monte Carlo'nun ~11 katı
+    (her sürgü için iki uç + taban), o yüzden sürgü kıpırdadıkça yeniden
+    koşmaması önemli.
+    """
+    return sensitivity.tornado(mc.StressParams(**kwargs))
 
 
 @st.cache_data(show_spinner=False)
@@ -659,6 +670,104 @@ s2.metric("Kötü Senaryo (p5) 12. Ay", money(mc_res.p5_end_cash, sym),
           delta_color="inverse")
 s3.metric("Beklenen İflas Ayı",
           f"{mc_res.expected_ruin_month:.1f}" if mc_res.expected_ruin_month else "—")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  DUYARLILIK (TORNADO) — hangi sürgü manşeti oynatıyor?
+# ══════════════════════════════════════════════════════════════════════════
+# Beş sürgüyü aynı anda oynatan kullanıcı, %94.3'ü hangisinin yaptığını göremez.
+# Tornado tam olarak bunu söyler ve "neyi düzeltirsem ne kazanırım" sorusunu
+# manşet sayıdan daha eylemli hâle getirir.
+theme.section("Neyi Düzeltirsen Ne Kazanırsın — Duyarlılık Analizi", chip="TORNADO")
+
+tor = run_tornado(
+    current_cash=current_cash,
+    monthly_revenue=avg_collections, monthly_fixed_expense=avg_exp,
+    monthly_debt_service=debt_service,
+    income_drop=income_drop, volatility=volatility,
+    delay_prob=delay_prob, delay_severity=delay_sev,
+    expense_inflation=exp_infl, months=12, n_iter=int(n_iter), seed=42,
+)
+delta_pp = round(tor.delta * 100)
+st.caption(
+    f"Her stres sürgüsü tek tek **±{delta_pp} puan** oynatılıp diğerleri sabit "
+    f"tutuldu; barlar batma olasılığının nereye gittiğini gösteriyor. Bütün "
+    f"koşular **aynı rastgele tohumu** paylaşır — aksi hâlde ölçülen fark "
+    f"parametreden mi Monte Carlo gürültüsünden mi geldiği ayırt edilemezdi."
+)
+
+base_pct = tor.base_probability * 100
+# Plotly yatay barları alttan yukarı dizer; en etkili sürgü ÜSTTE dursun diye ters.
+imp = list(reversed(tor.impacts))
+
+
+def _tornado_side(values, label):
+    """Tabanın bir yanındaki barları (aşağı uç ya da yukarı uç) çizer."""
+    deltas = [v * 100 - base_pct for v in values]
+    return go.Bar(
+        y=[i.label for i in imp], x=deltas, base=base_pct, orientation="h",
+        name=label, showlegend=False,
+        marker=dict(color=[COLORS["alarm"] if d > 0 else COLORS["guardian"]
+                           for d in deltas], line=dict(width=0)),
+        customdata=[[v * 100, d] for v, d in zip(values, deltas)],
+        hovertemplate=("<b>%{y}</b><br>Batma olasılığı: %%{customdata[0]:.1f}"
+                       "<br>Tabana göre: %{customdata[1]:+.1f} puan<extra></extra>"),
+    )
+
+
+figt = go.Figure()
+figt.add_trace(_tornado_side([i.low_probability for i in imp], "aşağı uç"))
+figt.add_trace(_tornado_side([i.high_probability for i in imp], "yukarı uç"))
+figt.add_vline(x=base_pct, line=dict(color=COLORS["text"], width=1.5, dash="dot"),
+               annotation_text=f"bugün: %{base_pct:.1f}",
+               annotation_font_color=COLORS["muted"])
+figt.update_layout(
+    template="plotly_dark", height=330, barmode="overlay",
+    title=dict(text=f"Sürgü başına ±{delta_pp} puanın batma olasılığına etkisi",
+               x=0, xanchor="left", font=dict(size=15)),
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    margin=dict(l=10, r=10, t=44, b=10),
+    xaxis=dict(title="12 ay içinde batma olasılığı (%)", gridcolor=COLORS["grid"],
+               ticksuffix="%", zeroline=False),
+    yaxis=dict(gridcolor="rgba(0,0,0,0)"),
+    font=dict(color=COLORS["text"]),
+)
+st.plotly_chart(figt, width="stretch")
+
+# ── Grafiğin sözlü karşılığı: grafik okumayan da cevabı alsın ─────────────
+top = tor.top
+if top is None:
+    st.info(
+        "Bu ayarlarda hiçbir sürgü batma olasılığını anlamlı biçimde "
+        "oynatmıyor — sonuç sürgülerden değil, şirketin yapısal nakit "
+        "açığından geliyor. Kaldıraç stres varsayımlarında değil, "
+        "tahsilat/gider tarafında."
+    )
+else:
+    yon = "artırıyor" if top.swing > 0 else "düşürüyor"
+    tsat = ("<b>Ters yönlü ve bu bir hata değil:</b> taban senaryo zaten derin "
+            "zararda olduğu için oynaklığın artması bazı yollara toparlanma "
+            "şansı verir; kasa suyun çok altındayken dalga boyu büyüdükçe "
+            "yüzeye çıkan senaryo sayısı artar. "
+            if top.key == "volatility" and top.swing < 0 else "")
+    st.markdown(
+        f'<div style="border-left:3px solid {COLORS["amber"]};'
+        f'background:{COLORS["panel"]};padding:12px 16px;border-radius:10px;'
+        f'font-size:14px;color:{COLORS["text"]};">'
+        f'🎯 <b>En büyük kaldıraç: {theme.esc(top.label)}.</b> Tek başına '
+        f'±{delta_pp} puanlık değişimi batma olasılığını '
+        f'<b>{abs(top.swing_pp):.1f} puan</b> {yon} '
+        f'(%{top.low_probability * 100:.1f} ↔ %{top.high_probability * 100:.1f}). '
+        f'{tsat}Diğer dört sürgüyü kurcalamadan önce buraya bak.'
+        f'</div>', unsafe_allow_html=True)
+
+    olu = [i.label for i in tor.impacts if i.negligible]
+    if olu:
+        st.caption(
+            f"⚪ Şu ayarlarda pratikte etkisiz: **{', '.join(olu)}** "
+            f"(±{delta_pp} puan oynatmak manşeti {sensitivity.NEGLIGIBLE_SWING_PP} "
+            f"puandan az değiştiriyor). Bu sürgülerle uğraşmak zaman kaybı."
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════
