@@ -266,7 +266,36 @@ def build_report(ctx: dict) -> bytes:
         kpi_rows.append((etiket, _money(supheli, sym)))
         kpi_colors[len(kpi_rows) - 1] = ALARM
 
+    # Ay-içi dip: aylık tabloların hiçbirinde görünmeyen an. Yönetim kurulu
+    # kredi limitini ay sonuna göre değil buna göre ayarlamalı.
+    dip_kasa = ctx.get("weekly_min_cash")
+    if dip_kasa is not None:
+        dip_hafta = ctx.get("weekly_min_week")
+        kpi_rows.append((f"13 Hafta İçindeki En Dip Kasa"
+                         + (f" ({_esc(dip_hafta)})" if dip_hafta else ""),
+                         _money(dip_kasa, sym)))
+        kpi_colors[len(kpi_rows) - 1] = ALARM if dip_kasa < 0 else AMBER
+
+    # En büyük kaldıraç: "neyi düzeltirsen ne kazanırsın" tek satırda.
+    kaldirac = ctx.get("top_driver")
+    if kaldirac:
+        kpi_rows.append(("Batma Riskini En Çok Oynatan Değişken",
+                         f"{_esc(kaldirac)}  ({ctx.get('top_driver_swing', 0):.1f} puan)"))
+        kpi_colors[len(kpi_rows) - 1] = AMBER
+
     story.append(_kv_table(kpi_rows, S, kpi_colors))
+
+    # Ay-içi çukurun derinliği tabloya sığmaz; asıl mesaj cümlede.
+    bosluk = ctx.get("weekly_intramonth_gap")
+    if dip_kasa is not None and bosluk:
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(
+            f"<b>Ay-içi uyarı:</b> 13 haftalık takvimde dönem sonu kasası "
+            f"{_money(ctx.get('weekly_end_cash', 0), sym)} görünürken en dip hafta "
+            f"{_money(dip_kasa, sym)}'ye iniyor — aradaki {_money(bosluk, sym)} "
+            f"aylık ortalamanın içinde kaybolan gerçek bir daralmadır. Kredi "
+            f"limiti, teminat ve tedarikçi vadesi pazarlıkları ay sonuna değil "
+            f"o haftaya göre kurulmalıdır.", S["body"]))
 
     # İki modelin çelişmesi raporun en değerli cümlesi; tabloya sığmaz, yazıyla.
     if z_skor is not None and z_bolge == "Güvenli" and ruin >= 60:

@@ -1262,6 +1262,14 @@ report_ctx = {
     "z_zone": zres.zone if zres.available else None,
     "expected_uncollectible": round(aging.expected_loss) if aging.total else None,
     "dso_days": round(aging.dso) if aging.dso else None,
+    # 13 haftalık ufkun özeti: aylık tabloların göremediği an
+    "weekly_min_cash": round(dip.closing_cash) if dip else None,
+    "weekly_min_week": f"{dip.start:%d.%m.%Y} haftası" if dip else None,
+    "weekly_end_cash": round(wk.end_cash),
+    "weekly_intramonth_gap": round(wk.intramonth_gap),
+    # Tornado'nun tek cümlelik hükmü
+    "top_driver": tor.top.label if tor.top else None,
+    "top_driver_swing": round(abs(tor.top.swing_pp), 1) if tor.top else 0.0,
     "cfo_text": advice["text"],
     "cfo_source": advice["source"],
 }
