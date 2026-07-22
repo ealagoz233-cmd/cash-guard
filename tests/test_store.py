@@ -39,6 +39,24 @@ def test_duplicate_name_does_not_overwrite():
     assert d[0]["senaryo"]["kredi"] == 10_000_000, "ilk kayıt ezilmiş"
 
 
+def test_old_notebooks_without_the_new_column_still_load():
+    """
+    "En dip hafta" sütunu sonradan eklendi. Kullanıcının diskinde o alan
+    OLMAYAN defterler var ve geri yüklendiklerinde tablo çökmemeli — kalıcılık
+    kullanıcıda olduğu için eski dosyalar süresiz yaşar.
+    """
+    eski = store.kaydet([], "Eski kayıt", _SENARYO, _OZET)   # en_dip_hafta yok
+    tablo = store.karsilastirma_tablosu(eski)
+    assert tablo[0]["En dip hafta"] is None
+    assert tablo[0]["Batma %"] == 94.3
+
+
+def test_weekly_trough_is_carried_into_the_comparison_table():
+    """Kredi karşılaştırmasının asıl sorusu: taksit yükü ay-içi dibi ne yapıyor?"""
+    d = store.kaydet([], "Kredili", _SENARYO, _OZET | {"en_dip_hafta": -450_000})
+    assert store.karsilastirma_tablosu(d)[0]["En dip hafta"] == -450_000
+
+
 def test_name_is_sanitised_and_never_empty():
     d = store.kaydet([], "   ", _SENARYO, _OZET)
     assert d[0]["ad"].strip(), "boş ad kabul edilmiş"

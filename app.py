@@ -1105,6 +1105,10 @@ if "defter" not in st.session_state:
     st.session_state.defter = []
 
 kay1, kay2 = st.columns([2, 1])
+# Defter kredi seçeneklerini karşılaştırıyor; kaydedilecek dip de kredili
+# senaryonunki olmalı (kredisizken zaten hepsi aynı dibi gösterirdi).
+_kayit_wk = wk_loan if wk_loan is not None else wk
+
 with kay1:
     _ad = st.text_input("Bu senaryoya bir ad ver", value="", max_chars=store.MAX_AD,
                         placeholder=f"örn. {money(loan_amount, sym)} kredi · {loan_term} ay")
@@ -1118,7 +1122,11 @@ with kay2:
             {"batma_yuzde": round(ruin_pct, 1),
              "iflas_ayi": (round(mc_res.expected_ruin_month)
                            if mc_res.expected_ruin_month else None),
-             "aylik_net": round(monthly_net)},
+             "aylik_net": round(monthly_net),
+             # Kredili senaryo varsa ONUN dibi kaydedilir: defterin sorusu
+             # "bu krediyi çekersem ne olur", taksit yükü de dibi derinleştirir.
+             "en_dip_hafta": round(_kayit_wk.min_week.closing_cash)
+             if _kayit_wk.min_week else None},
         )
 
 # Geri yükleme, tabloyu çizmeden ÖNCE işlenmeli: yoksa dosyayı yükleyen

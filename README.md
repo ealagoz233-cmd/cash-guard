@@ -200,6 +200,12 @@ Bir CFO aracının asıl işi tek senaryo hesaplamak değil, seçenekleri
 karşılaştırmaktır. Sürgüleri ayarla, senaryoyu adlandırıp kaydet, sonra
 başka bir senaryo dene — ikisi tabloda yan yana durur.
 
+Tabloda batma olasılığı, iflas ayı ve aylık netin yanında **13 haftalık en dip
+kasa** da durur — kredi karşılaştırmasının asıl sorusu budur: taksit yükü ay-içi
+dibi ne kadar derinleştiriyor? Bu sütun sonradan eklendi ve eski defterlerde
+boş görünür; kalıcılık kullanıcıda olduğu için eski dosyalar süresiz yaşar ve
+geri yüklendiklerinde çökmemeleri testle korunur.
+
 **Kalıcılık bilinçli olarak kullanıcıda:** kayıtlar sunucuda tutulmaz,
 istersen defteri JSON olarak indirir ve sonra geri yüklersin. İki sebep:
 uygulamanın kimlik doğrulaması yok (ortak bir veritabanı herkesin analizini
@@ -412,7 +418,7 @@ cash-guard/
 │   ├── format.py                # Arayüzden bağımsız biçimlendirme (motor kullanır)
 │   ├── theme.py                 # "War-room" karanlık tema, KPI kartları, CSS
 │   └── performance_utils.py     # Numba/NumPy nakit yolu çekirdeği
-├── tests/                       # 201 test, 14 dosya
+├── tests/                       # 203 test, 14 dosya
 │   ├── test_finance_math.py     # Kredi matematiği + Monte Carlo değişmezleri
 │   ├── test_runway.py           # Statik/trend runway, Theil–Sen dayanıklılığı
 │   ├── test_data_integrity.py   # Mock veri tutarlılığı + yükleme dayanıklılığı
@@ -522,7 +528,7 @@ python -m pytest tests/ -q          # pytest ile
 python tests/test_finance_math.py   # ya da tek tek, bağımlılıksız
 ```
 
-**201 test**, on dört dosyada:
+**203 test**, on dört dosyada:
 
 | Dosya | Neyi korur |
 |-------|-----------|
@@ -532,7 +538,7 @@ python tests/test_finance_math.py   # ya da tek tek, bağımlılıksız
 | `test_ai_cfo.py` (13) | Sağlayıcı sırası ve hataya karşı bir sonrakine geçiş, anahtarsız kural tabanlı motora düşüş, teşhis mesajı, anahtarın çıktıya sızmaması |
 | `test_report.py` (14) | PDF gerçekten üretiliyor mu, Türkçe karakter için font seçimi ve para birimi kararı |
 | `test_api.py` (17) | HTTP uçlarının sözleşmesi, girdi doğrulama ve iterasyon tavanı, **API'nin motorla aynı sayıyı vermesi**, arayüz yığını import edilemezken bile ayağa kalkması |
-| `test_store.py` (9) | Senaryo defteri sözleşmesi: kayıt kaybolmaz, bozuk JSON uygulamayı çökertmez |
+| `test_store.py` (11) | Senaryo defteri sözleşmesi: kayıt kaybolmaz, bozuk JSON uygulamayı çökertmez |
 | `test_runway.py` (8) | Statik/trend runway ayrışması, Theil–Sen'in aykırı değere dayanıklılığı, yetersiz veride güvenli geri çekilme |
 | `test_weekly.py` (17) | Aylık toplamların güne dağıtılırken korunması, ödeme günlerinin doğru haftaya düşmesi, olmayan ayın 31'inin son güne çekilmesi, gider dağılımı yokken "bu tablo bilgi taşımıyor" itirafı |
 | `test_zscore.py` (18) | Altman katsayılarının ve bölge eşiklerinin elle hesaplanmış değerlerle uyumu, model seçimi, eksik veride skor ÜRETMEME, borçsuz şirkette sonsuza kaçmama, "Altman güvenli der / nakit batıyor der" tezinin kilitlenmesi |

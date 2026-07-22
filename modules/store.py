@@ -84,6 +84,10 @@ def karsilastirma_tablosu(defter: list[dict]) -> list[dict]:
             "Batma %": o.get("batma_yuzde"),
             "İflas ayı": o.get("iflas_ayi"),
             "Aylık net": o.get("aylik_net"),
+            # Kredi karşılaştırmasının asıl sorusu bu: taksit yükü ay-içi dibi
+            # ne kadar derinleştiriyor? `get` ile okunuyor çünkü bu alan sonradan
+            # eklendi ve kullanıcının elindeki eski defterler onsuz geri yüklenir.
+            "En dip hafta": o.get("en_dip_hafta"),
             "Kaydedildi": k.get("tarih"),
         })
     return satirlar
