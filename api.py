@@ -24,6 +24,7 @@ from modules import loan_simulator as ls
 from modules import monte_carlo as mc
 from modules import receivables
 from modules import sensitivity
+from modules import zscore
 from modules.ai_cfo import RuthlessCFO
 from modules.runway import static_runway
 
@@ -115,6 +116,24 @@ class YaslandirmaIstegi(BaseModel):
     monthly_revenue: float | None = Field(
         None, ge=0, description="DSO için aylık FATURALANAN gelir (tahsilat değil)")
     declared_collection_days: float | None = None
+
+
+class ZSkorIstegi(BaseModel):
+    """
+    Altman Z-score için bilanço kalemleri.
+
+    `annual_sales` yalnızca X5 kullanan varyantta (Z′) gereklidir. `model`
+    verilmezse sektöre bakılır: üretim/imalat ibaresi Z′, aksi hâlde Z″.
+    """
+    total_assets: float = Field(..., description="Toplam varlık")
+    current_assets: float = Field(..., ge=0, description="Dönen varlık")
+    current_liabilities: float = Field(..., ge=0, description="Kısa vadeli yükümlülük")
+    total_liabilities: float = Field(..., ge=0, description="Toplam yükümlülük")
+    retained_earnings: float = Field(..., description="Geçmiş yıl kârları")
+    ebit_annual: float = Field(..., description="Yıllık FVÖK")
+    annual_sales: float | None = Field(None, ge=0, description="Yıllık satış (Z′ için)")
+    sector: str | None = Field(None, description="Model seçimi için sektör")
+    model: str | None = Field(None, description="'zprime' | 'zdouble' — sektörü ezer")
 
 
 class TavsiyeIstegi(BaseModel):
@@ -239,6 +258,42 @@ def yaslandirma(istek: YaslandirmaIstegi) -> dict:
             "achievable_slip_rate": turetilen.achievable_slip_rate,
             "clamped": turetilen.clamped,
         },
+    }
+
+
+@app.post("/zscore", tags=["Analiz"],
+          summary="Altman Z-score — bilançodan yapısal iflas riski")
+def z_skoru(istek: ZSkorIstegi) -> dict:
+    """
+    Altman Z-score: şirketin bilançosunu tarihsel olarak batanlarınkiyle
+    karşılaştırır. Nakit modelinden **bağımsız** bir hüküm verir ve sık sık
+    onunla çelişir — çelişkinin kendisi bilgidir: Altman tahakkuk esaslı yıllık
+    bir fotoğraf çeker, nakdin ne zaman geldiğini görmez.
+
+    Veri yetersizse skor **üretilmez**; `missing_fields` dolu döner. Yarım
+    veriyle hesaplanmış bir iflas skoru, hiç skor olmamasından tehlikelidir.
+    """
+    girdi = istek.model_dump()
+    secim = girdi.pop("model", None)
+    sektor = girdi.pop("sector", None)
+    model = zscore.MODELS.get(secim) or zscore.pick_model(sektor)
+
+    sonuc = zscore.compute(girdi, model)
+    return {
+        "model": sonuc.model_key,
+        "model_name": sonuc.model_name,
+        "model_fits": sonuc.model_fits,
+        "score": sonuc.score,
+        "zone": sonuc.zone,
+        "safe_above": sonuc.safe_above,
+        "distress_below": sonuc.distress_below,
+        "distance_to_safe": sonuc.distance_to_safe,
+        "missing_fields": sonuc.missing_fields,
+        "components": [
+            {"key": c.key, "label": c.label, "ratio": c.ratio,
+             "weight": c.weight, "contribution": c.contribution}
+            for c in sonuc.components
+        ],
     }
 
 

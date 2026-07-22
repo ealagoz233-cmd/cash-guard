@@ -18,6 +18,16 @@
   "receivables_outstanding": 9300000,
   "avg_collection_days": 78,
 
+  "_balance_sheet_note": "Altman Z-score için eklendi. Yukarıdaki skalerlerle TUTARLI kurulmuştur: dönen varlıkların içinde kasa 4.200.000 ve alacak 9.300.000 aynen yer alır (kalan 11.000.000 stok — tekstil üreticisi), toplam yükümlülüğün içinde de 12.500.000'luk mevcut borç stoku vardır (5.000.000 kısa vadeli taksit + 7.500.000 uzun vadeli) artı 15.500.000 ticari ve diğer kısa vadeli borç. Özkaynak = varlık − yükümlülük = 24.500.000 ve bunun 14.500.000'i geçmiş yıl kârı. Yıllık satış ve FVÖK burada SAKLANMAZ, aylık skalerlerden türetilir (12 × (gelir − gider) − amortisman); aynı büyüklüğü iki yere yazmak er geç ikisini ayrıştırır. Amortisman aylık gider kalemlerinin içinde yoktur (onların hepsi nakit çıkışı), o yüzden ayrı veriliyor. SONUÇ BİLEREK ÇARPICI: Z′ ~3.0 ile GÜVENLİ bölge çıkar, Monte Carlo ise %94 batma der. İkisi de doğrudur — Altman tahakkuk esaslı yıllık bir fotoğraf çeker, nakdin ne zaman geldiğini görmez. Uygulamanın tezi tam olarak budur.",
+  "balance_sheet": {
+    "current_assets": 24500000,
+    "current_liabilities": 20500000,
+    "total_assets": 52500000,
+    "total_liabilities": 28000000,
+    "retained_earnings": 14500000,
+    "annual_depreciation": 2800000
+  },
+
   "_history_note": "Tablo, yukarıdaki üst düzey skalerlerle BİREBİR tutarlıdır — ortalamalar tam olarak gelir 7.200.000, tahsilat 6.800.000, gider 5.950.000 verir ve kasa yürüyüşü (cash_end[t] = cash_end[t-1] + tahsilat − gider − 950.000 borç servisi) kuruşu kuruşuna tutar. Hikâye: faturalanan gelir neredeyse SABİT (~7.2M) kalırken tahsilat aylık düşüyor; alacak boşluğu 395K'dan 481K'ya genişliyor. Sonuç: kâğıt üstünde her şey yolunda görünürken kasa hızlanan bir tempoyla 5.75M'den 4.2M'ye eriyor. İlk ay (2025-07) son sağlıklı ay: eski alacaklar tahsil edildiği için boşluk yalnızca 100K. NOT: bu seriyi değiştirirsen ortalamaların ve yürüyüşün hâlâ tuttuğunu doğrula, yoksa KPI kartı ile grafik altı yazı farklı sayı gösterir.",
   "history": [
     { "month": "2025-07", "revenue": 7300000, "fixed_expense": 5900000, "collections": 7200000, "cash_end": 5750000 },

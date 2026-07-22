@@ -31,6 +31,7 @@ from modules import receivables
 from modules import scenario
 from modules import sensitivity
 from modules import store
+from modules import zscore
 from modules.ai_cfo import RuthlessCFO
 from modules import data_io
 from modules.data_io import REQUIRED_HISTORY_COLS, load_mock, parse_uploaded
@@ -333,6 +334,97 @@ if runway and trend_rw and trend_rw.months:
 #  ŞİRKET RÖNTGENİ — geçmiş trend + gider dağılımı + alacak yaşlandırma
 # ══════════════════════════════════════════════════════════════════════════
 theme.section("Şirket Röntgeni — Son 12 Ay & Yapısal Görünüm", chip="GENEL BAKIŞ")
+
+# ── Altman Z-score: bilançonun kendi verdiği hüküm ────────────────────────
+# Uygulamanın bütün hesapları nakde bakar. Altman ise tahakkuk esaslı yıllık bir
+# fotoğraf çeker ve muhasebe temelli iflas modellerinin en çok test edilmişidir.
+# İkisini yan yana koymanın değeri aynı şeyi söylemeleri değil, SÖYLEMEMELERİ:
+# demo şirketinde Altman "güvenli" derken nakit modeli %94 batma diyor.
+zres = zscore.from_company(data)
+if zres.available:
+    zc1, zc2 = st.columns([1, 1])
+
+    zone_color = {zscore.ZONE_SAFE: COLORS["guardian"],
+                  zscore.ZONE_GREY: COLORS["amber"],
+                  zscore.ZONE_DISTRESS: COLORS["alarm"]}[zres.zone]
+
+    with zc1:
+        # Gösterge, skoru üç bölgenin üzerine oturtur: tek başına "3.02" hiçbir
+        # şey ifade etmiyor, sınırlara göre nerede durduğu ifade ediyor.
+        ust = max(6.0, zres.score * 1.25)
+        alt = min(-1.0, zres.score - 1.0)
+        figz = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=zres.score,
+            number=dict(font=dict(size=42, color=zone_color), valueformat=".2f"),
+            gauge=dict(
+                axis=dict(range=[alt, ust], tickcolor=COLORS["muted"]),
+                bar=dict(color=zone_color, thickness=0.28),
+                bgcolor="rgba(0,0,0,0)", borderwidth=0,
+                steps=[
+                    dict(range=[alt, zres.distress_below],
+                         color="rgba(255,59,71,0.28)"),
+                    dict(range=[zres.distress_below, zres.safe_above],
+                         color="rgba(255,176,32,0.24)"),
+                    dict(range=[zres.safe_above, ust],
+                         color="rgba(0,224,164,0.20)"),
+                ],
+            ),
+        ))
+        figz.update_layout(
+            template="plotly_dark", height=250,
+            title=dict(text=f"{zres.model_name} — {zres.zone} bölge",
+                       x=0, xanchor="left", font=dict(size=14)),
+            paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=20, r=20, t=46, b=6),
+            font=dict(color=COLORS["text"]))
+        st.plotly_chart(figz, width="stretch")
+
+    with zc2:
+        # Bileşen dökümü: skoru hangi oranın taşıdığı görünmezse sayı bir
+        # kehanet gibi durur. Toplamları skora eşit (testle korunuyor).
+        comps = sorted(zres.components, key=lambda c: c.contribution)
+        figzc = go.Figure(go.Bar(
+            x=[c.contribution for c in comps],
+            y=[c.label for c in comps], orientation="h",
+            marker=dict(color=[COLORS["guardian"] if c.contribution >= 0
+                               else COLORS["alarm"] for c in comps],
+                        line=dict(width=0)),
+            customdata=[[c.ratio, c.weight, c.explain] for c in comps],
+            hovertemplate=("<b>%{y}</b><br>Oran: %{customdata[0]:.3f} × katsayı "
+                           "%{customdata[1]:.3f}<br>Skora katkısı: %{x:.3f}"
+                           "<br><i>%{customdata[2]}</i><extra></extra>")))
+        figzc.update_layout(
+            template="plotly_dark", height=250,
+            title=dict(text="Skoru kim taşıyor?", x=0, xanchor="left",
+                       font=dict(size=14)),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=10, r=10, t=46, b=10),
+            xaxis=dict(title="Skora katkı", gridcolor=COLORS["grid"]),
+            yaxis=dict(tickfont=dict(size=10)), font=dict(color=COLORS["text"]))
+        st.plotly_chart(figzc, width="stretch")
+
+    # İki modelin farklı konuşması bir arıza değil; asıl mesaj bu.
+    if zres.zone == zscore.ZONE_SAFE and ruin_pct >= 60:
+        st.markdown(
+            f'<div style="border-left:3px solid {COLORS["amber"]};'
+            f'background:{COLORS["panel"]};padding:12px 16px;border-radius:10px;'
+            f'font-size:14px;color:{COLORS["text"]};">'
+            f'🧩 <b>İki model çelişiyor ve ikisi de haklı.</b> Altman bilançoya '
+            f'bakıp <b>{zres.score:.2f} — güvenli bölge</b> diyor: şirket kâğıt '
+            f'üstünde kârlı, özkaynağı sağlam. Nakit modeli aynı şirket için '
+            f'<b>%{ruin_pct:.1f} batma</b> diyor. Fark yöntemde: Altman tahakkuk '
+            f'esaslı <b>yıllık bir fotoğraf</b> çeker, nakdin <b>ne zaman</b> '
+            f'geldiğini görmez. Şirketler tam olarak böyle batar — kârlı '
+            f'görünerek, nakitsiz.'
+            f'</div>', unsafe_allow_html=True)
+    else:
+        st.caption(
+            f"**{zres.model_name}.** {zres.model_fits} için kalibre edilmiştir. "
+            f"Bölge sınırları modelin kendi eşikleri: güvenli > {zres.safe_above}, "
+            f"tehlike < {zres.distress_below}. Skor bir olasılık değildir — "
+            f"şirketi tarihsel olarak batanlarla aynı bölgeye düşürüp "
+            f"düşürmediğini söyler."
+        )
 
 hist_df = pd.DataFrame(data.get("history", []))
 rx1, rx2 = st.columns([2, 1])
@@ -966,6 +1058,10 @@ cfo_ctx = {
     "expected_uncollectible": round(aging.expected_loss) if aging.total else None,
     "dso_days": round(aging.dso) if aging.dso else None,
     "overdue_share": round(aging.overdue_share, 3) if aging.total else None,
+    # Yapısal (bilanço) hüküm — nakit hükmüyle çeliştiğinde CFO bunu kurabilsin
+    "z_score": round(zres.score, 2) if zres.available else None,
+    "z_zone": zres.zone if zres.available else None,
+    "z_model": zres.model_name if zres.available else None,
 }
 
 # "Yeniden çağır" yalnızca GERÇEK bir LLM varsa anlamlı: kural tabanlı motor
@@ -1023,6 +1119,10 @@ report_ctx = {
     "default_with_loan": loan_res["default_with_loan"],
     "base_ruin_pct": ruin_pct,
     "loan_ruin_pct": (mc_loan.ruin_probability * 100) if mc_loan else None,
+    "z_score": round(zres.score, 2) if zres.available else None,
+    "z_zone": zres.zone if zres.available else None,
+    "expected_uncollectible": round(aging.expected_loss) if aging.total else None,
+    "dso_days": round(aging.dso) if aging.dso else None,
     "cfo_text": advice["text"],
     "cfo_source": advice["source"],
 }

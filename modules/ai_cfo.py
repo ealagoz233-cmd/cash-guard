@@ -100,7 +100,7 @@ gerçeği yüzüne söylersin. Cümlelerin kısa, net ve aksiyon odaklıdır.
 Sana bir şirketin nakit durumu, kredi senaryosu analizi ve Monte Carlo batma
 olasılığı verilecek. Görevin:
 1) Tek paragraflık sert bir teşhis yaz (durumu tokat gibi özetle).
-2) Ardından numaralı, uygulanabilir bir aksiyon planı ver (en fazla 6 madde).
+2) Ardından numaralı, uygulanabilir bir aksiyon planı ver (en fazla 8 madde).
    Her madde SOMUT olsun: hangi kalemden ne kadar kesilecek, hangi alacak
    durdurulacak, kredi çekilmeli mi çekilmemeli mi — rakamla konuş.
 Türkçe yaz. Abartılı nezaket yok. 'Bence' gibi zayıf ifadeler kullanma."""
@@ -407,6 +407,26 @@ Bu tabloya göre patrona teşhis + numaralı aksiyon planı yaz."""
                 f"tutmak, olmayan nakde göre karar vermektir.{dso_cumle}"
             )
 
+        # a3) Bilanço "iyi" derken nakit "batıyor" diyorsa, bu bir tuzaktır
+        z_skor = ctx.get("z_score")
+        z_bolge = ctx.get("z_zone")
+        if z_skor is not None and z_bolge == "Güvenli" and ruin >= 60:
+            actions.append(
+                f"Bilançonuz sizi rahatlatmasın: Altman skoru **{z_skor}** ile güvenli "
+                f"bölgede, yani kâğıt üstünde kârlı ve sermayeniz sağlam görünüyor. O "
+                f"model yıllık bir fotoğraf çeker, paranın NE ZAMAN geldiğini görmez. "
+                f"Şirketler tam olarak böyle batar — bankaya bu skoru göstererek değil, "
+                f"nakit takvimini düzelterek kurtulursunuz."
+            )
+        elif z_skor is not None and z_bolge == "Tehlike":
+            actions.append(
+                f"Altman skorunuz **{z_skor}** — tarihsel olarak batan şirketlerle aynı "
+                f"bölgedesiniz. Bu, nakit sıkışıklığından ayrı ve daha derin bir sorun: "
+                f"sermaye yapınız borcu taşıyamıyor. Nakit önlemleri kanamayı yavaşlatır "
+                f"ama yapıyı onarmaz; sermaye artırımı ya da borç yeniden yapılandırması "
+                f"masaya gelmeli."
+            )
+
         # b) En şişkin gider kaleminden kes
         if breakdown:
             # pazarlama gibi 'kısılabilir' kalemi öne al, yoksa en büyüğü
@@ -478,7 +498,10 @@ Bu tabloya göre patrona teşhis + numaralı aksiyon planı yaz."""
                 f"Yukarıdaki maddeleri hafta sonuna değil, bu hafta içine yayın."
             )
 
-        actions = actions[:6]  # en fazla 6 madde
+        # Tavan 6'dan 8'e çıkarıldı: yaşlandırma ve Altman maddeleri eklenince
+        # 6'lık kesim, listenin SONUNDAKİ nakit ömrü ve zaman baskısı
+        # maddelerini sessizce düşürüyordu — plan kısalmıyor, kuyruğu kayboluyordu.
+        actions = actions[:8]
         plan = "\n".join(f"{i}. {a}" for i, a in enumerate(actions, 1))
 
         return f"{diagnosis}\n\n**AKSİYON PLANI:**\n\n{plan}"

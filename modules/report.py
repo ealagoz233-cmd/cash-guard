@@ -248,7 +248,36 @@ def build_report(ctx: dict) -> bytes:
         kpi_colors[len(kpi_rows) - 1] = ALARM if trend_rw <= 12 else AMBER
     elif static_rw:
         kpi_rows.append(("Nakit Ömrü (sabit gidişle)", f"~{static_rw:.0f} ay"))
+
+    # Yapısal hüküm: bilanço ne diyor? Nakit hükmüyle çeliştiğinde yönetim
+    # kurulunun ilk soracağı soru bu olur, cevabı raporda hazır dursun.
+    z_skor, z_bolge = ctx.get("z_score"), ctx.get("z_zone")
+    if z_skor is not None and z_bolge:
+        kpi_rows.append((f"Altman Z-Skoru ({_esc(z_bolge)} bölge)", f"{z_skor:.2f}"))
+        kpi_colors[len(kpi_rows) - 1] = (
+            GUARDIAN if z_bolge == "Güvenli" else AMBER if z_bolge == "Gri" else ALARM)
+
+    # Alacak kalitesi: geciken para ile hiç gelmeyecek parayı ayır.
+    supheli = ctx.get("expected_uncollectible")
+    if supheli:
+        dso = ctx.get("dso_days")
+        etiket = ("Şüpheli Alacak (tahsil edilemeyebilir)"
+                  + (f" · DSO {dso:.0f} gün" if dso else ""))
+        kpi_rows.append((etiket, _money(supheli, sym)))
+        kpi_colors[len(kpi_rows) - 1] = ALARM
+
     story.append(_kv_table(kpi_rows, S, kpi_colors))
+
+    # İki modelin çelişmesi raporun en değerli cümlesi; tabloya sığmaz, yazıyla.
+    if z_skor is not None and z_bolge == "Güvenli" and ruin >= 60:
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(
+            f"<b>Dikkat:</b> Bilanço temelli Altman skoru ({z_skor:.2f}) şirketi "
+            f"<b>güvenli</b> bölgede gösterirken nakit modeli 12 ayda "
+            f"<b>%{ruin:.1f}</b> batma olasılığı veriyor. Çelişki değil, yöntem "
+            f"farkı: Altman tahakkuk esaslı yıllık bir fotoğraf çeker ve nakdin "
+            f"<b>ne zaman</b> geldiğini görmez. Şirketler tam olarak böyle batar — "
+            f"kârlı görünerek, nakitsiz.", S["body"]))
 
     # ── Kredi senaryosu ───────────────────────────────────────────────────
     story.append(Paragraph("2 · Kredi Senaryosu Analizi", S["h2"]))

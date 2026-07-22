@@ -97,6 +97,33 @@ def test_report_survives_missing_optional_fields():
     assert data[:5] == b"%PDF-"
 
 
+def test_report_grows_when_the_structural_verdict_is_added():
+    """
+    Altman skoru ve şüpheli alacak rapora gerçekten giriyor mu?
+
+    PDF metnini ayrıştırmak kırılgan olurdu; ölçülebilir ve dürüst kontrol
+    şu: alanlar verildiğinde belge büyümeli. Büyümüyorsa satırlar sessizce
+    düşürülmüş demektir.
+    """
+    yalin = report.build_report(_ctx())
+    zengin = report.build_report(_ctx() | {
+        "z_score": 3.02, "z_zone": "Güvenli",
+        "expected_uncollectible": 2_728_000, "dso_days": 39,
+    })
+    assert len(zengin) > len(yalin), "yapısal hüküm satırları rapora girmemiş"
+
+
+def test_report_stays_silent_without_structural_data():
+    """
+    Kullanıcı kendi CSV'sini yüklediğinde bilanço gelmez. Rapor bu durumda
+    uydurmamalı, sadece o satırları atlamalı — ve yine üretilmeli.
+    """
+    ctx = _ctx() | {"z_score": None, "z_zone": None,
+                    "expected_uncollectible": None, "dso_days": None}
+    data = report.build_report(ctx)
+    assert data[:5] == b"%PDF-"
+
+
 def test_markup_in_text_fields_does_not_break_pdf():
     """
     reportlab'ın Paragraph'ı mini-XML ayrıştırıcıdır: kaçırılmamış bir '<'
