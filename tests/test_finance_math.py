@@ -19,9 +19,11 @@ matematiğe dayanıyor. Burada üç şey doğrulanır:
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -46,6 +48,17 @@ def _params(**over):
                 months=12, n_iter=2_000, seed=42)
     base.update(over)
     return mc.StressParams(**base)
+
+
+def _taze():
+    """
+    Batma olasılığı önbelleğini boşaltır.
+
+    Bunu çağırmayan bir test, hızlandırmayı ölçtüğünü sanırken kendi önceki
+    koşusunun önbellek kaydını okur ve HER ZAMAN geçer — yani asıl doğrulamak
+    istediği eşitliği hiç doğrulamaz.
+    """
+    mc._RUIN_MEMO.clear()
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -134,6 +147,230 @@ def test_same_seed_is_reproducible():
     a, b = mc.run(_params()), mc.run(_params())
     assert a.ruin_probability == b.ruin_probability
     assert np.array_equal(a.percentiles["p50"], b.percentiles["p50"])
+
+
+def test_summary_only_run_gives_the_identical_probability():
+    """
+    `full=False` yalnızca boşa yapılan işi (fan chart bantları, örnek yollar,
+    dönem sonu istatistikleri) atlar; batma olasılığı BİREBİR aynı kalmalı.
+
+    Tornado ve kredi taraması onlarca koşuyu bu yolda yapıyor. Yol ayrışırsa
+    ekrandaki manşet ile o iki panelin tabanı sessizce farklılaşır.
+    """
+    p = _params()
+    _taze()
+    hizli = mc.run(p, full=False)     # ÖNCE: önbellekten değil, gerçekten koşsun
+    _taze()
+    tam = mc.run(p)
+    assert hizli.ruin_probability == tam.ruin_probability
+    assert hizli.n_iter == tam.n_iter
+    # Atlanan alanlar gerçekten üretilmemeli, yoksa tasarruf da yok
+    assert hizli.sample_paths.size == 0
+    assert hizli.percentiles == {}
+
+
+# ── Paylaşılan şok matrisleri ve olasılık önbelleği ───────────────────────
+def test_shared_shocks_give_the_identical_probability():
+    """
+    Paylaşılan matrisle koşmak, matrisi kendi kuran koşuyla BİREBİR aynı
+    olasılığı vermeli. Kredi taramasının 13 adımının tamamı bu yolda koşuyor;
+    yol ayrışırsa tarama eğrisi manşet sayıyla tutmaz hâle gelir.
+    """
+    p = _params()
+    _taze()
+    tek_basina = mc.run(p, full=False).ruin_probability
+    _taze()
+    paylasimli = mc.run(p, full=False, shocks=mc.build_shocks(p)).ruin_probability
+    assert paylasimli == tek_basina
+
+
+def test_shared_shocks_cover_the_two_fields_the_sweep_moves():
+    """
+    Taramanın oynattığı iki alan (kasa, borç servisi) şoku DEĞİŞTİRMEZ; bu
+    yüzden matris paylaşılabilir. Sözleşme buysa, bu iki alan değişince
+    paylaşımlı ve tek başına koşu yine aynı sayıyı vermeli.
+    """
+    taban = _params()
+    shocks = mc.build_shocks(taban)
+    tasinan = replace(taban, current_cash=taban.current_cash + 10_000_000,
+                      monthly_debt_service=taban.monthly_debt_service + 400_000)
+    _taze()
+    tek_basina = mc.run(tasinan, full=False).ruin_probability
+    _taze()
+    paylasimli = mc.run(tasinan, full=False, shocks=shocks).ruin_probability
+    assert paylasimli == tek_basina
+
+
+@pytest.mark.parametrize("alan,deger", [
+    ("income_drop", 0.25), ("volatility", 0.30), ("delay_prob", 0.55),
+    ("delay_severity", 0.60), ("expense_inflation", 0.30),
+    ("n_iter", 3_000), ("seed", 7), ("months", 18),
+    ("monthly_revenue", 9_000_000), ("monthly_fixed_expense", 1_000_000),
+])
+def test_shared_shocks_refuse_parameters_they_were_not_built_for(alan, deger):
+    """
+    Şoku belirleyen bir alan değişmişse eski matris SESSİZCE kullanılmamalı.
+
+    Cezası çöken bir program değil, makul görünen yanlış bir olasılık olurdu:
+    kullanıcı hiçbir belirti görmeden başka bir senaryonun sayısına bakardı.
+    """
+    taban = _params()
+    shocks = mc.build_shocks(taban)
+    with pytest.raises(ValueError):
+        mc.run(replace(taban, **{alan: deger}), full=False, shocks=shocks)
+
+
+def test_raw_draws_are_exactly_what_numpy_would_have_drawn():
+    """
+    Şok matrisi iki adıma ayrıldı: ham çekim + parametre dönüşümü. Ayrımın
+    dayandığı eşitlik `rng.normal(ortalama, sapma) == ortalama + sapma·z` ve bu
+    eşitlik BİREBİR olmalı — yaklaşık değil.
+
+    Bozulursa hiçbir şey çökmez: tornado sessizce başka bir senaryonun
+    sayılarını gösterir. Bu yüzden referans, NumPy'ın kendi çağrısıdır.
+    """
+    p = _params()
+    m = p.months
+    ramp = np.arange(1, m + 1) / m
+
+    ref = np.random.default_rng(p.seed)
+    gelir_ref = np.clip(
+        ref.normal(1.0 - p.income_drop * ramp, p.volatility, size=(p.n_iter, m)),
+        0.0, None) * p.monthly_revenue
+    u_ref = ref.random((p.n_iter, m))
+    gider_ref = np.clip(
+        ref.normal(1.0 + p.expense_inflation * ramp, p.volatility * 0.6,
+                   size=(p.n_iter, m)), 0.0, None) * p.monthly_fixed_expense
+    idx_ref = ref.choice(p.n_iter, size=min(mc.PLOT_SAMPLE_PATHS, p.n_iter),
+                         replace=False)
+
+    yeni = np.random.default_rng(p.seed)
+    d = mc.build_draws(p, yeni)
+    gelir, gider = mc._build_shock_matrices(p, d)
+    idx = yeni.choice(p.n_iter, size=min(mc.PLOT_SAMPLE_PATHS, p.n_iter),
+                      replace=False)
+
+    # Gecikme kayması gelire binmiş durumda; ham gelirin kendisi yerine
+    # üreticinin AYNI noktada olduğunu ve gider ile uniform'un tuttuğunu ara.
+    assert np.array_equal(d.delay_u, u_ref)
+    assert np.array_equal(gider, gider_ref)
+    assert np.array_equal(idx, idx_ref), (
+        "üretici farklı noktada kaldı: full=True koşusunun çizdiği örnek "
+        "yollar sessizce değişirdi")
+    kayma = gelir_ref * p.delay_severity * (u_ref < p.delay_prob)
+    beklenen = gelir_ref - kayma
+    beklenen[:, 1:] += kayma[:, :-1]
+    assert np.array_equal(gelir, beklenen)
+
+
+@pytest.mark.parametrize("alan,deger", [
+    ("income_drop", 0.25), ("volatility", 0.30), ("delay_prob", 0.55),
+    ("delay_severity", 0.60), ("expense_inflation", 0.30),
+    ("current_cash", 9_000_000), ("monthly_debt_service", 1_400_000),
+    ("monthly_revenue", 7_400_000), ("monthly_fixed_expense", 5_100_000),
+])
+def test_shared_draws_serve_every_slider_the_tornado_moves(alan, deger):
+    """
+    Ham çekim yalnızca boyuta (n_iter, months, seed) bağlıdır; hiçbir stres
+    sürgüsüne değil. Sözleşme buysa, paylaşılan çekimle koşan bir senaryo kendi
+    çekimini yapanla BİREBİR aynı olasılığı vermeli.
+
+    Tornado'nun on bir koşusunun tamamı bu yolda; ayrışırsa barlar manşet
+    sayının ölçtüğünden başka bir şeyi ölçer.
+    """
+    taban = _params()
+    draws = mc.build_draws(taban)
+    senaryo = replace(taban, **{alan: deger})
+    _taze()
+    tek_basina = mc.run(senaryo, full=False).ruin_probability
+    _taze()
+    paylasimli = mc.run(senaryo, full=False, draws=draws).ruin_probability
+    assert paylasimli == tek_basina
+
+
+@pytest.mark.parametrize("alan,deger", [
+    ("n_iter", 3_000), ("months", 18), ("seed", 7),
+])
+def test_shared_draws_refuse_a_different_shape(alan, deger):
+    """Boyutu belirleyen üç alan değiştiyse eski çekim sessizce kullanılmamalı."""
+    taban = _params()
+    draws = mc.build_draws(taban)
+    with pytest.raises(ValueError):
+        mc.run(replace(taban, **{alan: deger}), full=False, draws=draws)
+
+
+def test_in_place_math_never_touches_what_it_shares():
+    """
+    Şok kurulumu ve nakit döngüsü bellek trafiğini kısmak için YERİNDE yazıyor.
+    Bunun tek gerçek riski, paylaşılan bir diziyi bozmaktır: tarama aynı şoku 13
+    kez, tornado aynı çekimi 11 kez okuyor. Bozulsa hiçbir şey çökmez — ilk
+    koşudan sonraki her sonuç sessizce kayar.
+    """
+    p = _params()
+    draws = mc.build_draws(p)
+    z_gelir = draws.income_z.copy()
+    u_gecikme = draws.delay_u.copy()
+    z_gider = draws.expense_z.copy()
+
+    shocks = mc.build_shocks(p, draws=draws)
+    gelir = shocks.revenue.copy()
+    gider = shocks.expense.copy()
+
+    for _ in range(3):
+        mc.run(p, full=False, shocks=shocks)
+        mc.run(p, full=False, draws=draws)
+
+    assert np.array_equal(draws.income_z, z_gelir)
+    assert np.array_equal(draws.delay_u, u_gecikme)
+    assert np.array_equal(draws.expense_z, z_gider)
+    assert np.array_equal(shocks.revenue, gelir)
+    assert np.array_equal(shocks.expense, gider)
+
+
+def test_running_the_same_shared_shocks_twice_gives_the_same_answer():
+    """Yukarıdakinin davranış tarafı: tekrar okumak sonucu kaydırmamalı."""
+    p = _params()
+    shocks = mc.build_shocks(p)
+    _taze()
+    ilk = mc.run(p, full=False, shocks=shocks).ruin_probability
+    _taze()
+    ikinci = mc.run(p, full=False, shocks=shocks).ruin_probability
+    assert ilk == ikinci
+
+
+def test_probability_memo_returns_what_a_fresh_run_computes():
+    """Önbellekten dönen sayı, yeniden hesaplananla birebir aynı olmalı."""
+    p = _params(current_cash=3_000_000)
+    _taze()
+    ilk = mc.run(p, full=False).ruin_probability
+    onbellekten = mc.run(p, full=False).ruin_probability
+    _taze()
+    yeniden = mc.run(p, full=False).ruin_probability
+    assert onbellekten == ilk == yeniden
+
+
+def test_full_run_fills_the_memo_for_the_summary_path():
+    """
+    Manşet koşusu (full=True) ile tornado'nun tabanı ve taramanın sıfır noktası
+    AYNI senaryoyu ölçüyor. Manşet sonucu önbelleğe yazmazsa aynı hesap üç kez
+    yapılır.
+    """
+    p = _params(current_cash=3_300_000)
+    _taze()
+    tam = mc.run(p)
+    assert mc._RUIN_MEMO, "full=True koşusu önbelleğe yazmalı"
+    assert mc.run(p, full=False).ruin_probability == tam.ruin_probability
+
+
+def test_memo_stays_out_of_the_way_when_there_is_no_seed():
+    """
+    Tohumsuz koşu tanımı gereği her seferinde farklıdır; önbelleğe alınırsa
+    kullanıcı rastgeleliği kapatmadığı hâlde donmuş bir sayı görür.
+    """
+    p = _params(seed=None)
+    _taze()
+    mc.run(p, full=False)
+    assert not mc._RUIN_MEMO
 
 
 def test_ruin_histogram_matches_ruined_count():

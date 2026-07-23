@@ -69,7 +69,7 @@ def test_trend_runway_is_shorter_than_static_when_deteriorating():
     static = static_runway(cash, monthly_net)
     trend = trend_runway(d["history"], cash, ds)
 
-    assert trend is not None and trend.months is not None
+    assert trend.available and trend.months is not None
     assert trend.slope_per_month < 0, "demo verisinde faaliyet nakdi bozulmalı"
     assert trend.months < static, f"trend {trend.months} ay, statik {static:.0f} ay"
 
@@ -92,12 +92,54 @@ def test_improving_company_has_no_trend_ruin():
     assert trend.months is None
 
 
-def test_insufficient_data_returns_none():
-    """Az gözlem ya da eksik sütunla trend konuşulmaz — arayüz statiğe düşer."""
-    assert trend_runway([], 1_000_000, 100_000) is None
-    assert trend_runway(_flat_history(MIN_MONTHS_FOR_TREND - 1), 1_000_000, 100_000) is None
-    eksik = [{"month": f"{i}", "revenue": 100} for i in range(12)]
-    assert trend_runway(eksik, 1_000_000, 100_000) is None
+def test_insufficient_data_says_so_instead_of_vanishing():
+    """
+    Az gözlem ya da eksik sütunla trend konuşulmaz — ama sonuç yine döner.
+
+    Eskiden fonksiyonun kendisi `None` dönüyordu ve bu, "kasa ufuk içinde
+    sıfırlanmıyor" anlamına gelen `months=None` ile aynı `if` içinde eleniyordu:
+    iyi haber ile eksik veri ekranda tek ve sessiz bir boşluğa dönüşüyordu.
+    """
+    for gecmis in ([],
+                   _flat_history(MIN_MONTHS_FOR_TREND - 1),
+                   [{"month": f"{i}", "revenue": 100} for i in range(12)]):
+        trend = trend_runway(gecmis, 1_000_000, 100_000)
+        assert trend.available is False
+        assert trend.months is None
+        assert trend.missing_fields, "eksik olan alan adıyla söylenmeli"
+
+
+def test_module_docstring_quotes_the_real_demo_ladder():
+    """
+    `runway.py` başlığındaki "42 ay / 10 ay" merdiveni demo verisiyle tutmalı.
+
+    Serbest bırakıldığında bayatladı: demo verisi yeniden kalibre edildi, cümle
+    eski rakamı (14 ay) söylemeye devam etti. README'nin kendi test sayısını
+    testle bağladığımız gerekçenin aynısı — kendi hakkında yanlış konuşan bir
+    modül, kullanıcıya yanlış konuşan bir uygulamanın provasıdır.
+    """
+    import re
+
+    import modules.runway as rw
+
+    d = load_mock()
+    ds = d["existing_monthly_debt_service"]
+    net = d["avg_monthly_collections"] - d["avg_monthly_fixed_expense"] - ds
+
+    m = re.search(r"statik hesap ~(\d+) ay derken trend hesabı ~(\d+) ay",
+                  rw.__doc__)
+    assert m, "modül başlığındaki merdiven cümlesi bulunamadı"
+    assert int(m.group(1)) == round(static_runway(d["current_cash"], net))
+    assert int(m.group(2)) == trend_runway(d["history"], d["current_cash"], ds).months
+
+
+def test_no_ruin_on_the_horizon_is_not_confused_with_missing_data():
+    """`available=True, months=None` iyi haberdir; eksik veriyle karışmamalı."""
+    hist = [{"month": f"{i}", "collections": 6_000_000 + 50_000 * i,
+             "fixed_expense": 5_800_000} for i in range(12)]
+    trend = trend_runway(hist, current_cash=2_000_000, debt_service=300_000)
+    assert trend.available is True and trend.months is None
+    assert trend.missing_fields == []
 
 
 if __name__ == "__main__":

@@ -49,6 +49,30 @@ def varsayilanlar() -> dict[str, int | float]:
     return {a.anahtar: a.varsayilan for a in ALANLAR}
 
 
+def sinirlar(anahtar: str) -> tuple[int | float, int | float]:
+    """
+    Bir sürgünün (alt, üst) sınırı — MUTLAK değerlerle, ör. kredi tutarı.
+
+    Sınırlar burada tanımlı ve motor modülleri bunları kopyalamak yerine
+    buradan okumalı. Kopyalandıklarında sessiz bir tuzak oluşuyordu: sürgü
+    genişletilir, motor eski tavanda kırpmaya devam eder ve kullanıcı
+    ayarlayabildiği bir değerin neden uygulanmadığını göremez.
+    """
+    alan = _ALAN_HARITASI[anahtar]      # bilinmeyen anahtar KeyError: kasıtlı
+    return alan.alt, alan.ust
+
+
+def oran_sinirlari(anahtar: str) -> tuple[float, float]:
+    """
+    Yüzde cinsinden girilen bir sürgünün ONDALIK sınırları (%80 → 0.80).
+
+    Motor tarafı oranlarla çalışır, sürgüler yüzde puanıyla; çevirmeyi tek
+    yerde yapmak iki tarafın ayrışmasını engeller.
+    """
+    alt, ust = sinirlar(anahtar)
+    return alt / 100.0, ust / 100.0
+
+
 def _kirp(a: Alan, ham) -> int | float:
     """Tek değeri güvenle çevirir ve aralığa kırpar; olmazsa varsayılan."""
     try:

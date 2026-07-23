@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import asdict
 
 import numpy as np
 import pandas as pd
@@ -26,15 +27,22 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from modules import loan_simulator as ls
+from modules import loan_sweep
 from modules import monte_carlo as mc
+from modules import receivables
 from modules import scenario
+from modules import sensitivity
 from modules import store
+from modules import weekly
+from modules import zscore
 from modules.ai_cfo import RuthlessCFO
 from modules import data_io
-from modules.data_io import REQUIRED_HISTORY_COLS, load_mock, parse_uploaded
+from modules.data_io import (REQUIRED_HISTORY_COLS, load_mock,
+                             parse_uploaded_files)
 from modules.report import build_report
 from modules.runway import static_runway, trend_runway
 from utils import theme
+from utils.sufficiency import missing_label
 from utils.theme import COLORS, expense_label, money, threat_color, tr_num
 
 # ── Sayfa yapılandırması + tema ───────────────────────────────────────────
@@ -53,6 +61,28 @@ theme.inject_css()
 def run_monte_carlo(**kwargs) -> mc.StressResult:
     """StressParams'ı kurup mc.run çağırır. kwargs sayesinde cache anahtarı net."""
     return mc.run(mc.StressParams(**kwargs))
+
+
+@st.cache_data(show_spinner="Sürgülerin etkisi tek tek ölçülüyor…")
+def run_tornado(**kwargs) -> sensitivity.TornadoResult:
+    """
+    Duyarlılık analizini önbelleğe alır. Maliyeti tek Monte Carlo'nun ~11 katı
+    (her sürgü için iki uç + taban), o yüzden sürgü kıpırdadıkça yeniden
+    koşmaması önemli.
+    """
+    return sensitivity.tornado(mc.StressParams(**kwargs))
+
+
+@st.cache_data(show_spinner="Kredi tutarları taranıyor…")
+def run_loan_sweep(loan: dict, **stress) -> loan_sweep.SweepResult:
+    """
+    Kredi tutarı taramasını önbelleğe alır.
+
+    Stres parametreleri diğer iki sarmalayıcıyla AYNI biçimde (kwargs olarak)
+    alınır; böylece üç çağrı yerine de tek bir `**STRES` akıtılabiliyor ve her
+    çağrı yerini kendi sözleşmesine göre okumak gerekmiyor.
+    """
+    return loan_sweep.sweep(mc.StressParams(**stress), ls.LoanScenario(**loan))
 
 
 @st.cache_data(show_spinner=False)
@@ -100,8 +130,10 @@ st.sidebar.markdown("### 📁 Veri Kaynağı")
 upload = st.sidebar.file_uploader(
     "Kendi verini yükle (CSV/Excel) — opsiyonel",
     type=["csv", "xlsx", "xls"],
-    help="Biçim A: 'alan,deger' sütunları. Biçim B: month, revenue, fixed_expense, "
-         "collections, cash_end sütunlu aylık tablo.",
+    accept_multiple_files=True,
+    help="Birden fazla dosya yükleyebilirsin; hepsi tek şirkette birleşir. "
+         "Biçim A: 'alan,deger'. Biçim B: month, revenue, fixed_expense, "
+         "collections, cash_end. Biçim C: musteri, tutar, gecikme_gun.",
 )
 
 # Şablon, yükleyicinin hemen altında duruyor: biçimi öğrenmek için README'ye
@@ -117,17 +149,28 @@ upload = st.sidebar.file_uploader(
 # alıp özelliği yoklayınca, en kötü ihtimalle bu buton görünmez; uygulama ayakta
 # kalır ve bir sonraki yeniden başlatmada kendiliğinden düzelir.
 _sablon_uret = getattr(data_io, "ornek_sablon", None)
+_alacak_sablon_uret = getattr(data_io, "ornek_alacak_sablonu", None)
 if _sablon_uret is not None:
-    st.sidebar.download_button(
-        "⬇️ Örnek şablon (CSV)",
+    sb1, sb2 = st.sidebar.columns(2)
+    sb1.download_button(
+        "⬇️ Şablon",
         data=_sablon_uret(),
         file_name="cash_guard_sablon.csv",
         mime="text/csv",
         width="stretch",
-        help="İndir, kendi rakamlarınla doldur, yukarıdan yükle.",
+        help="Skalerler + bilanço + gider dağılımı. İndir, doldur, yükle.",
     )
+    if _alacak_sablon_uret is not None:
+        sb2.download_button(
+            "⬇️ Alacaklar",
+            data=_alacak_sablon_uret(),
+            file_name="cash_guard_alacaklar.csv",
+            mime="text/csv",
+            width="stretch",
+            help="Alacak yaşlandırma listesi. Diğer şablonla BİRLİKTE yüklenebilir.",
+        )
 
-data = parse_uploaded(upload) if upload else load_mock()
+data = parse_uploaded_files(upload) if upload else load_mock()
 if data is None:
     data = load_mock()
 
@@ -211,40 +254,48 @@ net_op = avg_collections - avg_exp                           # faaliyet NAKİT a
 #  HESAPLAMALAR
 # ══════════════════════════════════════════════════════════════════════════
 # Modül 1 — kredi simülasyonu (deterministik). Nakit girişi = tahsilat.
-scenario = ls.LoanScenario(
+# Adı bilerek `scenario` DEĞİL: o ad `modules.scenario` modülüne ait ve burada
+# yeniden bağlanınca modül bu satırdan sonra erişilemez hâle geliyordu.
+loan_scn = ls.LoanScenario(
     current_cash=current_cash, monthly_revenue=avg_collections,
     monthly_fixed_expense=avg_exp, existing_debt_service=debt_service,
     loan_amount=loan_amount, loan_term_months=loan_term,
     monthly_interest_rate=interest, horizon_months=24,
 )
-loan_res = ls.simulate(scenario)
+loan_res = ls.simulate(loan_scn)
+
+# Stres parametreleri TEK yerde kurulur. Dört ayrı tüketici (manşet Monte Carlo,
+# kredili karşılaştırma, tornado, tutar taraması) AYNI senaryoyu ölçmek zorunda.
+# Blok kopyalanınca biri güncellenip diğerleri eski senaryoda kalıyordu ve ekran
+# aynı şirket için farklı sayılar gösteriyordu — bu deponun her yerde savaştığı
+# hata sınıfının ta kendisi (bkz. test_api_and_engine_agree).
+STRES = dict(
+    current_cash=current_cash,
+    monthly_revenue=avg_collections,
+    monthly_fixed_expense=avg_exp,
+    monthly_debt_service=debt_service,
+    income_drop=income_drop, volatility=volatility,
+    delay_prob=delay_prob, delay_severity=delay_sev,
+    expense_inflation=exp_infl,
+    months=12, n_iter=int(n_iter), seed=42,
+)
 
 # Modül 2 — Monte Carlo. MEVCUT iş modelini (yeni kredi OLMADAN) stres testine
 # sokar: "bugünkü halimle 12 ayda batma olasılığım ne?" Kredinin etkisi Modül
 # 1'de deterministik olarak, CFO yorumunda ise sözlü olarak ele alınır.
-mc_res = run_monte_carlo(
-    current_cash=current_cash,
-    monthly_revenue=avg_collections, monthly_fixed_expense=avg_exp,
-    monthly_debt_service=debt_service,
-    income_drop=income_drop, volatility=volatility,
-    delay_prob=delay_prob, delay_severity=delay_sev,
-    expense_inflation=exp_infl, months=12, n_iter=int(n_iter), seed=42,
-)
+mc_res = run_monte_carlo(**STRES)
 ruin_pct = mc_res.ruin_probability * 100
 
 # Karşılaştırma senaryosu: AYNI stres, ama krediyi çekmiş varsayarak
 # (başta +kredi nakdi, vade boyunca +taksit). Kredi 12 ayı rahatlatıp
-# 24 ayda batıran "borç tuzağını" sayısal olarak görünür kılar.
+# 24 ayda batıran "borç tuzağını" sayısal olarak görünür kılar. Yalnızca
+# değişen iki alan ezilir; gerisi tanımı gereği tabanla aynı kalır.
 mc_loan = None
 if loan_amount > 0:
-    mc_loan = run_monte_carlo(
-        current_cash=current_cash + loan_amount,
-        monthly_revenue=avg_collections, monthly_fixed_expense=avg_exp,
-        monthly_debt_service=debt_service + loan_res["installment"],
-        income_drop=income_drop, volatility=volatility,
-        delay_prob=delay_prob, delay_severity=delay_sev,
-        expense_inflation=exp_infl, months=12, n_iter=int(n_iter), seed=42,
-    )
+    mc_loan = run_monte_carlo(**(STRES | {
+        "current_cash": current_cash + loan_amount,
+        "monthly_debt_service": debt_service + loan_res["installment"],
+    }))
 
 # Nakit ömrü (runway): aylık net dış akış negatifse kasa / yakım.
 # DİKKAT: Bu STATİK bir hesap — bugünkü yakım hızının sonsuza dek sabit kalacağını
@@ -285,7 +336,7 @@ with k3:
     ), unsafe_allow_html=True)
 with k4:
     # Statik hesabın yanıltıcılığını kartın kendisinde göster: sabit gidiş vs trend.
-    if runway and trend_rw and trend_rw.months:
+    if runway and trend_rw.available and trend_rw.months:
         net_sub = f"Sabit gidişle ~{runway:.0f} ay · trend sürerse ~{trend_rw.months} ay"
     elif runway:
         net_sub = f"Sabit gidişle ~{runway:.0f} ay ömür"
@@ -301,7 +352,7 @@ with k4:
 # ── Nakit ömrü merdiveni ──────────────────────────────────────────────────
 # Üç hesap üç farklı cevap veriyor ve aradaki uçurum uygulamanın asıl tezi:
 # "kasam 42 ay dayanır" diyen statik hesap, bozulmayı ve oynaklığı yok sayıyor.
-if runway and trend_rw and trend_rw.months:
+if runway and trend_rw.available and trend_rw.months:
     n_hist = len(data.get("history", []))
     stres_notu = (
         f"; Monte Carlo stresi altında beklenen temerrüt **{mc_res.expected_ruin_month:.0f}. ay**"
@@ -319,6 +370,108 @@ if runway and trend_rw and trend_rw.months:
 #  ŞİRKET RÖNTGENİ — geçmiş trend + gider dağılımı + alacak yaşlandırma
 # ══════════════════════════════════════════════════════════════════════════
 theme.section("Şirket Röntgeni — Son 12 Ay & Yapısal Görünüm", chip="GENEL BAKIŞ")
+
+# ── Altman Z-score: bilançonun kendi verdiği hüküm ────────────────────────
+# Uygulamanın bütün hesapları nakde bakar. Altman ise tahakkuk esaslı yıllık bir
+# fotoğraf çeker ve muhasebe temelli iflas modellerinin en çok test edilmişidir.
+# İkisini yan yana koymanın değeri aynı şeyi söylemeleri değil, SÖYLEMEMELERİ:
+# demo şirketinde Altman "güvenli" derken nakit modeli %94 batma diyor.
+zres = zscore.from_company(data)
+if zres.available:
+    zc1, zc2 = st.columns([1, 1])
+
+    zone_color = {zscore.ZONE_SAFE: COLORS["guardian"],
+                  zscore.ZONE_GREY: COLORS["amber"],
+                  zscore.ZONE_DISTRESS: COLORS["alarm"]}[zres.zone]
+
+    with zc1:
+        # Gösterge, skoru üç bölgenin üzerine oturtur: tek başına "3.02" hiçbir
+        # şey ifade etmiyor, sınırlara göre nerede durduğu ifade ediyor.
+        ust = max(6.0, zres.score * 1.25)
+        alt = min(-1.0, zres.score - 1.0)
+        figz = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=zres.score,
+            number=dict(font=dict(size=42, color=zone_color), valueformat=".2f"),
+            gauge=dict(
+                axis=dict(range=[alt, ust], tickcolor=COLORS["muted"]),
+                bar=dict(color=zone_color, thickness=0.28),
+                bgcolor="rgba(0,0,0,0)", borderwidth=0,
+                steps=[
+                    dict(range=[alt, zres.distress_below],
+                         color="rgba(255,59,71,0.28)"),
+                    dict(range=[zres.distress_below, zres.safe_above],
+                         color="rgba(255,176,32,0.24)"),
+                    dict(range=[zres.safe_above, ust],
+                         color="rgba(0,224,164,0.20)"),
+                ],
+            ),
+        ))
+        figz.update_layout(
+            template="plotly_dark", height=250,
+            title=dict(text=f"{zres.model_name} — {zres.zone} bölge",
+                       x=0, xanchor="left", font=dict(size=14)),
+            paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=20, r=20, t=46, b=6),
+            font=dict(color=COLORS["text"]))
+        st.plotly_chart(figz, width="stretch")
+
+    with zc2:
+        # Bileşen dökümü: skoru hangi oranın taşıdığı görünmezse sayı bir
+        # kehanet gibi durur. Toplamları skora eşit (testle korunuyor).
+        comps = sorted(zres.components, key=lambda c: c.contribution)
+        figzc = go.Figure(go.Bar(
+            x=[c.contribution for c in comps],
+            y=[c.label for c in comps], orientation="h",
+            marker=dict(color=[COLORS["guardian"] if c.contribution >= 0
+                               else COLORS["alarm"] for c in comps],
+                        line=dict(width=0)),
+            customdata=[[c.ratio, c.weight, c.explain] for c in comps],
+            hovertemplate=("<b>%{y}</b><br>Oran: %{customdata[0]:.3f} × katsayı "
+                           "%{customdata[1]:.3f}<br>Skora katkısı: %{x:.3f}"
+                           "<br><i>%{customdata[2]}</i><extra></extra>")))
+        figzc.update_layout(
+            template="plotly_dark", height=250,
+            title=dict(text="Skoru kim taşıyor?", x=0, xanchor="left",
+                       font=dict(size=14)),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=10, r=10, t=46, b=10),
+            xaxis=dict(title="Skora katkı", gridcolor=COLORS["grid"]),
+            yaxis=dict(tickfont=dict(size=10)), font=dict(color=COLORS["text"]))
+        st.plotly_chart(figzc, width="stretch")
+
+    # İki modelin farklı konuşması bir arıza değil; asıl mesaj bu.
+    if zres.zone == zscore.ZONE_SAFE and ruin_pct >= 60:
+        st.markdown(
+            f'<div style="border-left:3px solid {COLORS["amber"]};'
+            f'background:{COLORS["panel"]};padding:12px 16px;border-radius:10px;'
+            f'font-size:14px;color:{COLORS["text"]};">'
+            f'🧩 <b>İki model çelişiyor ve ikisi de haklı.</b> Altman bilançoya '
+            f'bakıp <b>{zres.score:.2f} — güvenli bölge</b> diyor: şirket kâğıt '
+            f'üstünde kârlı, özkaynağı sağlam. Nakit modeli aynı şirket için '
+            f'<b>%{ruin_pct:.1f} batma</b> diyor. Fark yöntemde: Altman tahakkuk '
+            f'esaslı <b>yıllık bir fotoğraf</b> çeker, nakdin <b>ne zaman</b> '
+            f'geldiğini görmez. Şirketler tam olarak böyle batar — kârlı '
+            f'görünerek, nakitsiz.'
+            f'</div>', unsafe_allow_html=True)
+    else:
+        st.caption(
+            f"**{zres.model_name}.** {zres.model_fits} için kalibre edilmiştir. "
+            f"Bölge sınırları modelin kendi eşikleri: güvenli > {zres.safe_above}, "
+            f"tehlike < {zres.distress_below}. Skor bir olasılık değildir — "
+            f"şirketi tarihsel olarak batanlarla aynı bölgeye düşürüp "
+            f"düşürmediğini söyler."
+        )
+else:
+    # Panel sessizce KAYBOLMAMALI. Kullanıcı bilançoyu vermediğinde eskiden
+    # ekranda hiçbir iz kalmıyordu: özelliğin var olduğunu bile öğrenemiyordu.
+    # Eksik alanlar `missing_fields`ten geliyor ve şablonda AYNEN o adla duruyor
+    # (bkz. tests/test_engine_contract.py).
+    st.info(
+        "ℹ️ **Altman Z-score üretilmedi** — yüklediğin veride bilanço yok. "
+        "Yarım veriyle hesaplanmış bir iflas skoru, hiç skor olmamasından "
+        "tehlikelidir, o yüzden uydurulmuyor. Şablondaki şu alanları "
+        f"doldurursan bu kart açılır: `{missing_label(zres)}`."
+    )
 
 hist_df = pd.DataFrame(data.get("history", []))
 rx1, rx2 = st.columns([2, 1])
@@ -435,6 +588,105 @@ if recv:
         yaxis=dict(autorange="reversed"), font=dict(color=COLORS["text"]))
     st.plotly_chart(figr, width="stretch")
 
+# ── Yaşlandırmayı nakit modeline bağla ────────────────────────────────────
+# Yaşlandırma bugüne kadar sadece bir grafikti: ekranda duruyor, hiçbir hesabı
+# beslemiyordu. Gecikme tek bir sürgüyle giriliyordu — yani 92 gün gecikmiş
+# 3,15 milyonluk müşteri ile zamanında ödeyen bir defter aynı sürgüye düşüyordu.
+aging = receivables.age(
+    recv,
+    total_outstanding=data.get("receivables_outstanding"),
+    monthly_revenue=avg_rev,                       # DSO faturalanan gelire göre
+)
+
+if aging.available:
+    a1, a2, a3 = st.columns(3)
+    with a1:
+        st.markdown(theme.kpi_card(
+            "Alacak Devir Günü (DSO)",
+            f"{aging.dso:.0f} gün" if aging.dso else "—",
+            f"Bakiye {money(aging.total, sym)} ÷ aylık faturalanan gelir",
+            accent=COLORS["alarm"] if aging.dso and aging.dso > 60
+            else COLORS["amber"] if aging.dso and aging.dso > 45 else COLORS["guardian"],
+        ), unsafe_allow_html=True)
+    with a2:
+        st.markdown(theme.kpi_card(
+            "Muhtemelen Hiç Gelmeyecek",
+            money(aging.expected_loss, sym),
+            f"Defterin %{aging.expected_loss_share * 100:.0f}'i — yaşlandırma "
+            f"karşılık oranlarıyla",
+            accent=COLORS["alarm"],
+        ), unsafe_allow_html=True)
+    with a3:
+        st.markdown(theme.kpi_card(
+            "Vadesi Geçmiş Pay",
+            f"%{aging.overdue_share * 100:.0f}",
+            f"Ağırlıklı ortalama {aging.weighted_overdue_days:.0f} gün gecikme",
+            accent=threat_color(aging.overdue_share * 100),
+        ), unsafe_allow_html=True)
+
+    st.caption(
+        "**Gecikme ≠ kayıp.** Geciken para sonunda gelir, şüpheli alacak hiç "
+        "gelmez. Yukarıdaki tahmin, kova başına yerleşik karşılık oranlarıyla "
+        "(vadesinde %2 → 90+ gün %50) hesaplanır; kendi tahsilat geçmişin varsa "
+        "bu oranlar değiştirilmelidir."
+    )
+
+    # Yaşlandırma ile bakiye birbirini tutmuyorsa sus-pus geçme.
+    if aging.dso_conflict:
+        st.warning(
+            f"⚠️ **Veri tutarsızlığı:** Yaşlandırma listesi alacakların ortalama "
+            f"**{aging.weighted_overdue_days:.0f} gün** vadesini aştığını söylüyor, "
+            f"ama bakiyeden hesaplanan DSO yalnızca **{aging.dso:.0f} gün**. İkisi "
+            f"aynı anda doğru olamaz: ya bakiye eksik ya da yaşlandırma listesi "
+            f"defterin tamamını temsil etmiyor. Aşağıdaki türetilmiş sürgüleri "
+            f"kullanmadan önce bu farkı çöz."
+        )
+
+    # ── Sürgü karşılıkları + tek tıkla uygula ─────────────────────────────
+    imp = receivables.implied_stress(aging)
+    imp_gecikme, imp_kayan = imp.as_slider_percents
+    farkli = (imp_gecikme, imp_kayan) != (senaryo["gecikme"], senaryo["kayan"])
+
+    u1, u2 = st.columns([3, 1])
+    with u1:
+        st.markdown(
+            f'<div style="border-left:3px solid {COLORS["guardian"]};'
+            f'background:{COLORS["panel"]};padding:12px 16px;border-radius:10px;'
+            f'font-size:14px;color:{COLORS["text"]};">'
+            f'📐 <b>Yaşlandırmadan türetilen gecikme profili:</b> bu defterle bir '
+            f'ayın tahsilatının <b>%{imp.expected_slip_rate * 100:.0f}</b>\'inin '
+            f'gelecek aydan sonraya sarkması bekleniyor. Sürgü karşılığı: '
+            f'gecikme olasılığı <b>%{imp_gecikme}</b>, kayan tahsilat '
+            f'<b>%{imp_kayan}</b> (şu an %{senaryo["gecikme"]} / '
+            f'%{senaryo["kayan"]}).'
+            f'</div>', unsafe_allow_html=True)
+    with u2:
+        st.write("")
+        if st.button("📐 Sürgülere uygula", width="stretch", disabled=not farkli,
+                     help="Stres sürgülerini yaşlandırmadan türetilen değerlere çeker"):
+            hedef = dict(senaryo, gecikme=imp_gecikme, kayan=imp_kayan)
+            st.query_params.clear()
+            st.query_params.update(scenario.to_query_params(hedef))
+            st.rerun()
+
+    if imp.clamped:
+        st.caption(
+            f"⚠️ Türetilen kayma (%{imp.expected_slip_rate * 100:.0f}) sürgülerin "
+            f"taşıyabileceğinin (%{imp.achievable_slip_rate * 100:.0f}) üstünde; "
+            f"değerler tavana kırpıldı. Yani sürgüleri uygulasan bile simülasyon "
+            f"bu defterden **daha iyimser** kalır."
+        )
+else:
+    # Z-score kartıyla aynı gerekçe: özellik sessizce yok olmasın, neyin
+    # eksik olduğu kullanıcının doldurabileceği adla söylensin.
+    st.info(
+        "ℹ️ **Alacak yaşlandırma paneli açılmadı** — yüklediğin veride alacak "
+        "bakiyesi ya da yaşlandırma listesi yok. Tahmini bir bakiye uydurmak, "
+        "olmayan bir bilgiyi varmış gibi göstermek olurdu. Şablonda "
+        f"`{missing_label(aging)}` alanlarını doldurursan DSO, şüpheli alacak "
+        "ve türetilmiş gecikme profili burada çıkar."
+    )
+
 
 # ══════════════════════════════════════════════════════════════════════════
 #  MODÜL 1 — KREDİ KURTARIR MI?
@@ -443,7 +695,7 @@ theme.section("Kredi Kurtarır mı? — Borç Tuzağı Tahmini", chip="MODÜL 1"
 # İki modül bilerek FARKLI ufuklara ve yöntemlere bakıyor; bu ekranda yazmayınca
 # "%94 batma" ile "20. ayda iflas" çelişkili görünüyordu. Varsayımı açıkça yaz.
 st.caption(
-    f"**{scenario.horizon_months} aylık deterministik projeksiyon.** Tahsilat "
+    f"**{loan_scn.horizon_months} aylık deterministik projeksiyon.** Tahsilat "
     f"({money(avg_collections, sym)}/ay) ve gider ({money(avg_exp, sym)}/ay) sabit "
     f"varsayılır, rastgelelik yoktur. Cevapladığı soru: *kredi çekersem kasa eğrisi "
     f"ne zaman sıfırı deler?* — yani **zamanlama**."
@@ -518,6 +770,216 @@ else:
               delta="Sadece morfin" if relief <= 6 else "Nefes aralığı",
               delta_color="inverse")
 
+# ── Kredi tutarı taraması: "çekeyim mi" değil, "KAÇ LİRA" ─────────────────
+# Yukarısı tek bir tutarı sınıyor. Asıl karar iki katmanlı ve ikinci katman
+# sürgüyü elle 12 kez oynatarak aranıyordu; aradaki eğri hiç görünmüyordu.
+st.write("")
+# Kredi şablonu Modül 1'in senaryosundan TÜRETİLİR, yeniden yazılmaz: vade,
+# faiz ve ufuk iki yerde tutulsaydı aynı ekranda tek tutarlık kart ile tarama
+# eğrisi farklı varsayımlara oturabilirdi. `loan_amount` zaten her adımda
+# eziliyor (bkz. loan_sweep.sweep), sıfırlanması sadece niyeti belli ediyor.
+sweep_res = run_loan_sweep(
+    loan=asdict(loan_scn) | {"loan_amount": 0.0}, **STRES)
+
+x_tutar = [p.amount for p in sweep_res.points]
+figs = go.Figure()
+figs.add_trace(go.Scatter(
+    x=x_tutar, y=[p.ruin_pct for p in sweep_res.points],
+    name="12 ay batma olasılığı (%)", mode="lines+markers",
+    line=dict(color=COLORS["guardian"], width=3),
+    hovertemplate=sym + "%{x:,.0f} → %%{y:.1f}<extra>12 ay</extra>"))
+figs.add_trace(go.Bar(
+    x=x_tutar, y=[p.relief_months for p in sweep_res.points],
+    name="İflasın ötelenmesi (ay)", yaxis="y2", opacity=0.55,
+    marker_color=[COLORS["guardian_dim"] if p.relief_months >= 0 else COLORS["alarm"]
+                  for p in sweep_res.points],
+    hovertemplate=sym + "%{x:,.0f} → %{y:+d} ay<extra>Uzun vade</extra>"))
+figs.add_vline(x=loan_amount, line=dict(color=COLORS["amber"], width=1.5, dash="dot"),
+               annotation_text="şu anki sürgü", annotation_font_color=COLORS["amber"])
+figs.update_layout(
+    template="plotly_dark", height=380,
+    title=dict(text="Kredi tutarı taraması — kısa vadeli rahatlama vs. uzun vadeli yük",
+               x=0, xanchor="left", font=dict(size=15)),
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    margin=dict(l=10, r=10, t=44, b=60),
+    xaxis=dict(title=f"Çekilen kredi ({sym})", gridcolor=COLORS["grid"]),
+    yaxis=dict(title="12 ay batma (%)", gridcolor=COLORS["grid"],
+               ticksuffix="%", rangemode="tozero"),
+    # Çift eksen burada dürüst: biri yüzde, diğeri ay. (Kasa grafiğinde
+    # kaçınılmıştı çünkü orada üç iz de aynı birimdeydi.)
+    yaxis2=dict(title="Öteleme (ay)", overlaying="y", side="right",
+                gridcolor="rgba(0,0,0,0)", zeroline=True,
+                zerolinecolor=COLORS["muted"]),
+    legend=dict(orientation="h", yanchor="top", y=-0.2, x=0),
+    font=dict(color=COLORS["text"]))
+st.plotly_chart(figs, width="stretch")
+
+# ── Taramanın sözlü hükmü ─────────────────────────────────────────────────
+_en_iyi = sweep_res.best
+if _en_iyi is None:
+    pass
+elif sweep_res.best_is_a_trap:
+    # Asıl mesaj bu: yalnızca 12 aylık olasılığa bakan bir "optimizasyon",
+    # uygulamanın uyardığı hatanın ta kendisini yapardı.
+    st.markdown(
+        f'<div style="border-left:3px solid {COLORS["alarm"]};'
+        f'background:{COLORS["panel"]};padding:14px 18px;border-radius:10px;'
+        f'font-size:14px;color:{COLORS["text"]};">'
+        f'🪤 <b>Eğrinin söylediği şey bir tavsiye değil, bir tuzak tarifi.</b> '
+        f'12 aylık batma olasılığını en aza indiren tutar '
+        f'<b>{money(_en_iyi.amount, sym)}</b> ve riski '
+        f'%{sweep_res.baseline.ruin_pct:.1f}\'den <b>%{_en_iyi.ruin_pct:.1f}</b>\'e '
+        f'düşürüyor. Ama aynı tutar iflası <b>{abs(_en_iyi.relief_months)} ay ÖNE '
+        f'çekiyor</b> ve {money(_en_iyi.total_interest, sym)} faiz yükü bindiriyor. '
+        f'Nakit enjeksiyonu ilk 12 ayı neredeyse her zaman rahatlatır; taksit '
+        f'sonra vurur. Kırmızı barlar büyüdükçe kaçış penceresi kapanıyor — '
+        f'"en düşük risk" burada en pahalı seçenek.'
+        f'</div>', unsafe_allow_html=True)
+elif sweep_res.borrowing_helps:
+    st.success(
+        f"✅ Bu tabloda kredi gerçekten işe yarıyor: **{money(_en_iyi.amount, sym)}** "
+        f"12 aylık riski %{sweep_res.baseline.ruin_pct:.1f} → **%{_en_iyi.ruin_pct:.1f}** "
+        f"yapıyor ve iflası **{_en_iyi.relief_months} ay ötelıyor**. Kazanılan süreyi "
+        f"nakit üretimini onarmak için kullan; yoksa o da erir."
+    )
+else:
+    st.info(
+        f"ℹ️ Hiçbir kredi tutarı 12 aylık riski anlamlı biçimde "
+        f"(≥{loan_sweep.MEANINGFUL_GAIN_PP} puan) düşürmüyor. Sorun nakit "
+        f"miktarı değil, nakit ÜRETİMİ — borçlanmak bu tabloyu değiştirmez."
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  13 HAFTALIK LİKİDİTE UFKU — ay-içi nakit çukurları
+# ══════════════════════════════════════════════════════════════════════════
+# Modül 1 ve 2 AYLIK bakar; aylık ortalama, ayın en kritik gününü ortalamanın
+# altında saklar. Ay artıda kapansa bile maaş günü kasa dibi görebilir.
+# Kurumsal likidite kontrolünün fiili standardı bu yüzden 13 haftalık tablodur.
+theme.section("13 Haftalık Likidite Ufku — Ayın Hangi Günü Dara Düşüyorsun?",
+              chip="HAFTALIK")
+
+hafta_basi = weekly.parse_start(data.get("as_of"))
+
+
+def _haftalik(ek_kasa: float = 0.0, ek_taksit: float = 0.0):
+    """
+    Haftalık planı kurar; yalnızca kredinin değiştirdiği iki alanı parametre alır.
+
+    İki eğri AYNI eksende çiziliyor ve ancak diğer dört girdi birebir aynıysa
+    karşılaştırılabilir. Argümanlar iki yere kopyalandığında bunu hiçbir şey
+    zorlamıyordu — burada ayrışmak imkânsız.
+    """
+    return weekly.build(
+        current_cash=current_cash + ek_kasa,
+        monthly_collections=avg_collections,
+        expense_breakdown=data.get("expense_breakdown"),
+        monthly_fixed_expense=avg_exp,
+        monthly_debt_service=debt_service + ek_taksit,
+        start=hafta_basi,
+    )
+
+
+wk = _haftalik()
+# Kredili karşılığı: baştan +kredi nakdi, her ay +taksit yükü.
+wk_loan = (_haftalik(ek_kasa=loan_amount, ek_taksit=loan_res["installment"])
+           if loan_amount > 0 else None)
+
+st.caption(
+    f"**{len(wk.weeks)} haftalık nakit takvimi** ({wk.weeks[0].start:%d.%m.%Y} – "
+    f"{wk.weeks[-1].end:%d.%m.%Y}). Aylık toplamlar güne dağıtılır: kira ayın "
+    f"1'i, maaş 5'i, kredi taksiti 15'i, enerji/lojistik 20'si; hammadde, "
+    f"pazarlama ve **tahsilat** aya eşit yayılır. Tahsilatın yayılması bilinçli "
+    f"olarak nötr bir varsayımdır — gerçek tahsilat takvimi bilinmiyorken onu "
+    f"tek güne yığmak, olmayan bir bilgiyi varmış gibi göstermek olurdu."
+)
+
+if not wk.available:
+    # Her şey aya yayılmışsa haftalık eğri, aylık çizginin ince çizilmiş hâlidir.
+    st.info(
+        "ℹ️ Yüklediğin veride gider dağılımı yok, bu yüzden tüm çıkışlar aya "
+        "eşit yayıldı. Aşağıdaki eğri aylık çizginin daha ince çizilmiş hâli — "
+        "**ay-içi çukur bilgisi taşımıyor.** Maaş/kira gibi kalemleri ayrı ayrı "
+        "verirsen bu tablo asıl işini yapar."
+    )
+
+dip = wk.min_week
+etiketler = [f"H{w.index}<br>{w.start:%d.%m}" for w in wk.weeks]
+
+figw = go.Figure()
+figw.add_trace(go.Bar(
+    x=etiketler, y=[w.inflow for w in wk.weeks], name="Haftalık tahsilat",
+    marker_color="rgba(0,224,164,0.32)",
+    hovertemplate="%{x}: " + sym + "%{y:,.0f}<extra>Giriş</extra>"))
+figw.add_trace(go.Bar(
+    x=etiketler, y=[-w.outflow for w in wk.weeks], name="Haftalık çıkış",
+    marker_color="rgba(255,59,71,0.38)",
+    hovertemplate="%{x}: " + sym + "%{y:,.0f}<extra>Çıkış</extra>"))
+figw.add_trace(go.Scatter(
+    x=etiketler, y=[w.closing_cash for w in wk.weeks], name="Hafta sonu kasa",
+    mode="lines+markers", line=dict(color=COLORS["guardian"], width=3),
+    hovertemplate="%{x}: " + sym + "%{y:,.0f}<extra>Kasa</extra>"))
+if wk_loan is not None:
+    figw.add_trace(go.Scatter(
+        x=etiketler, y=[w.closing_cash for w in wk_loan.weeks],
+        name=f"{money(loan_amount, sym)} kredi çekilirse", mode="lines",
+        line=dict(color=COLORS["amber"], width=2, dash="dash"),
+        hovertemplate="%{x}: " + sym + "%{y:,.0f}<extra>Kredili</extra>"))
+figw.add_hline(y=0, line=dict(color=COLORS["alarm"], width=1.5, dash="dot"))
+if dip is not None:
+    figw.add_annotation(
+        x=f"H{dip.index}<br>{dip.start:%d.%m}", y=dip.closing_cash,
+        text=f"en dip: {money(dip.closing_cash, sym)}",
+        showarrow=True, arrowhead=2, ay=38, arrowcolor=COLORS["amber"],
+        font=dict(color=COLORS["amber"], size=12))
+figw.update_layout(
+    template="plotly_dark", height=420, barmode="relative",
+    title=dict(text="Haftalık nakit hareketi ve kasa yolu", x=0, xanchor="left",
+               font=dict(size=15)),
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    margin=dict(l=10, r=10, t=44, b=60),
+    xaxis=dict(gridcolor=COLORS["grid"], tickfont=dict(size=10)),
+    yaxis=dict(title=f"Tutar ({sym})", gridcolor=COLORS["grid"], zeroline=False),
+    legend=dict(orientation="h", yanchor="top", y=-0.18, x=0),
+    font=dict(color=COLORS["text"]))
+st.plotly_chart(figw, width="stretch")
+
+w1, w2, w3 = st.columns(3)
+with w1:
+    st.markdown(theme.kpi_card(
+        "En Dip Hafta", f"H{dip.index} · {dip.start:%d.%m}" if dip else "—",
+        f"Hafta sonu kasa {money(dip.closing_cash, sym)}" if dip else "",
+        accent=COLORS["alarm"] if dip and dip.closing_cash < 0
+        else COLORS["amber"] if dip and dip.closing_cash < current_cash * 0.5
+        else COLORS["guardian"]), unsafe_allow_html=True)
+with w2:
+    st.markdown(theme.kpi_card(
+        "Aylık Modelin Göremediği Derinlik", money(wk.intramonth_gap, sym),
+        "Dönem sonu kasası ile en dip hafta arasındaki fark",
+        accent=COLORS["amber"]), unsafe_allow_html=True)
+with w3:
+    ilk_eksi = wk.first_negative
+    st.markdown(theme.kpi_card(
+        "13 Hafta İçinde Kasa Eksiye Düşüyor mu?",
+        f"Evet · H{ilk_eksi.index}" if ilk_eksi else "Hayır",
+        f"{ilk_eksi.start:%d.%m.%Y} haftası" if ilk_eksi
+        else "Bu ufukta nakit tükenmiyor",
+        accent=COLORS["alarm"] if ilk_eksi else COLORS["guardian"]),
+        unsafe_allow_html=True)
+
+if wk.available and dip is not None:
+    st.markdown(
+        f'<div style="border-left:3px solid {COLORS["amber"]};'
+        f'background:{COLORS["panel"]};padding:12px 16px;border-radius:10px;'
+        f'margin-top:12px;font-size:14px;color:{COLORS["text"]};">'
+        f'📅 <b>Aylık bakınca görünmeyen an.</b> Dönem sonunda kasa '
+        f'<b>{money(wk.end_cash, sym)}</b> görünüyor, ama {dip.start:%d.%m.%Y} '
+        f'haftasında <b>{money(dip.closing_cash, sym)}</b>\'ye iniyor — aradaki '
+        f'<b>{money(wk.intramonth_gap, sym)}</b> aylık ortalamanın içinde kaybolan '
+        f'gerçek bir daralmadır. Kredi limiti, teminat ve tedarikçi vadesi '
+        f'pazarlıkları ay sonuna değil <b>bu haftaya</b> göre kurulmalı.'
+        f'</div>', unsafe_allow_html=True)
+
 
 # ══════════════════════════════════════════════════════════════════════════
 #  MODÜL 2 — MONTE CARLO KASA STRES TESTİ
@@ -527,7 +989,7 @@ st.caption(
     f"**12 aylık stokastik simülasyon** — {tr_num(n_iter)} senaryo, her ayın geliri ve "
     f"gideri sürgülerdeki şoklarla rastgele çekilir. Cevapladığı soru: *bugünkü halimle "
     f"batma **olasılığım** ne?* Ufku Modül 1'den kısa (12 ay vs "
-    f"{scenario.horizon_months} ay) ve krediyi hesaba katmaz — kredinin etkisi aşağıdaki "
+    f"{loan_scn.horizon_months} ay) ve krediyi hesaba katmaz — kredinin etkisi aşağıdaki "
     f"senaryo karşılaştırmasında ayrıca koşulur."
 )
 
@@ -662,6 +1124,106 @@ s3.metric("Beklenen İflas Ayı",
 
 
 # ══════════════════════════════════════════════════════════════════════════
+#  DUYARLILIK (TORNADO) — hangi sürgü manşeti oynatıyor?
+# ══════════════════════════════════════════════════════════════════════════
+# Beş sürgüyü aynı anda oynatan kullanıcı, %94.3'ü hangisinin yaptığını göremez.
+# Tornado tam olarak bunu söyler ve "neyi düzeltirsem ne kazanırım" sorusunu
+# manşet sayıdan daha eylemli hâle getirir.
+theme.section("Neyi Düzeltirsen Ne Kazanırsın — Duyarlılık Analizi", chip="TORNADO")
+
+tor = run_tornado(**STRES)
+delta_pp = round(tor.delta * 100)
+st.caption(
+    f"Her stres sürgüsü tek tek **±{delta_pp} puan** oynatılıp diğerleri sabit "
+    f"tutuldu; barlar batma olasılığının nereye gittiğini gösteriyor. Bütün "
+    f"koşular **aynı rastgele tohumu** paylaşır — aksi hâlde ölçülen fark "
+    f"parametreden mi Monte Carlo gürültüsünden mi geldiği ayırt edilemezdi."
+)
+
+base_pct = tor.base_probability * 100
+# Plotly yatay barları alttan yukarı dizer; en etkili sürgü ÜSTTE dursun diye ters.
+etkiler = list(reversed(tor.impacts))
+
+
+def _tornado_side(values, label, etkiler, taban_pct):
+    """
+    Tabanın bir yanındaki barları (aşağı uç ya da yukarı uç) çizer.
+
+    Etkiler ve taban parametre olarak alınır, modül kapsamından okunmaz: bu
+    yardımcı eskiden üç satır yukarıdaki iki isme sessizce bağlıydı ve o
+    isimlerden biri (`imp`) sayfanın başka bir yerinde farklı bir nesne için de
+    kullanılıyordu. Bloklardan biri yer değiştirse grafik sessizce yanlış çizerdi.
+    """
+    deltas = [v * 100 - taban_pct for v in values]
+    return go.Bar(
+        y=[i.label for i in etkiler], x=deltas, base=taban_pct, orientation="h",
+        name=label, showlegend=False,
+        marker=dict(color=[COLORS["alarm"] if d > 0 else COLORS["guardian"]
+                           for d in deltas], line=dict(width=0)),
+        customdata=[[v * 100, d] for v, d in zip(values, deltas)],
+        hovertemplate=("<b>%{y}</b><br>Batma olasılığı: %%{customdata[0]:.1f}"
+                       "<br>Tabana göre: %{customdata[1]:+.1f} puan<extra></extra>"),
+    )
+
+
+figt = go.Figure()
+figt.add_trace(_tornado_side([i.low_probability for i in etkiler],
+                             "aşağı uç", etkiler, base_pct))
+figt.add_trace(_tornado_side([i.high_probability for i in etkiler],
+                             "yukarı uç", etkiler, base_pct))
+figt.add_vline(x=base_pct, line=dict(color=COLORS["text"], width=1.5, dash="dot"),
+               annotation_text=f"bugün: %{base_pct:.1f}",
+               annotation_font_color=COLORS["muted"])
+figt.update_layout(
+    template="plotly_dark", height=330, barmode="overlay",
+    title=dict(text=f"Sürgü başına ±{delta_pp} puanın batma olasılığına etkisi",
+               x=0, xanchor="left", font=dict(size=15)),
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    margin=dict(l=10, r=10, t=44, b=10),
+    xaxis=dict(title="12 ay içinde batma olasılığı (%)", gridcolor=COLORS["grid"],
+               ticksuffix="%", zeroline=False),
+    yaxis=dict(gridcolor="rgba(0,0,0,0)"),
+    font=dict(color=COLORS["text"]),
+)
+st.plotly_chart(figt, width="stretch")
+
+# ── Grafiğin sözlü karşılığı: grafik okumayan da cevabı alsın ─────────────
+top = tor.top
+if top is None:
+    st.info(
+        "Bu ayarlarda hiçbir sürgü batma olasılığını anlamlı biçimde "
+        "oynatmıyor — sonuç sürgülerden değil, şirketin yapısal nakit "
+        "açığından geliyor. Kaldıraç stres varsayımlarında değil, "
+        "tahsilat/gider tarafında."
+    )
+else:
+    yon = "artırıyor" if top.swing > 0 else "düşürüyor"
+    tsat = ("<b>Ters yönlü ve bu bir hata değil:</b> taban senaryo zaten derin "
+            "zararda olduğu için oynaklığın artması bazı yollara toparlanma "
+            "şansı verir; kasa suyun çok altındayken dalga boyu büyüdükçe "
+            "yüzeye çıkan senaryo sayısı artar. "
+            if top.key == "volatility" and top.swing < 0 else "")
+    st.markdown(
+        f'<div style="border-left:3px solid {COLORS["amber"]};'
+        f'background:{COLORS["panel"]};padding:12px 16px;border-radius:10px;'
+        f'font-size:14px;color:{COLORS["text"]};">'
+        f'🎯 <b>En büyük kaldıraç: {theme.esc(top.label)}.</b> Tek başına '
+        f'±{delta_pp} puanlık değişimi batma olasılığını '
+        f'<b>{abs(top.swing_pp):.1f} puan</b> {yon} '
+        f'(%{top.low_probability * 100:.1f} ↔ %{top.high_probability * 100:.1f}). '
+        f'{tsat}Diğer dört sürgüyü kurcalamadan önce buraya bak.'
+        f'</div>', unsafe_allow_html=True)
+
+    olu = [i.label for i in tor.impacts if i.negligible]
+    if olu:
+        st.caption(
+            f"⚪ Şu ayarlarda pratikte etkisiz: **{', '.join(olu)}** "
+            f"(±{delta_pp} puan oynatmak manşeti {sensitivity.NEGLIGIBLE_SWING_PP} "
+            f"puandan az değiştiriyor). Bu sürgülerle uğraşmak zaman kaybı."
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════
 #  SENARYO DEFTERİ — birkaç senaryoyu yan yana koy
 # ══════════════════════════════════════════════════════════════════════════
 # Bir CFO aracının asıl işi tek senaryo hesaplamak değil, seçenekleri
@@ -672,6 +1234,10 @@ if "defter" not in st.session_state:
     st.session_state.defter = []
 
 kay1, kay2 = st.columns([2, 1])
+# Defter kredi seçeneklerini karşılaştırıyor; kaydedilecek dip de kredili
+# senaryonunki olmalı (kredisizken zaten hepsi aynı dibi gösterirdi).
+_kayit_wk = wk_loan if wk_loan is not None else wk
+
 with kay1:
     _ad = st.text_input("Bu senaryoya bir ad ver", value="", max_chars=store.MAX_AD,
                         placeholder=f"örn. {money(loan_amount, sym)} kredi · {loan_term} ay")
@@ -685,7 +1251,11 @@ with kay2:
             {"batma_yuzde": round(ruin_pct, 1),
              "iflas_ayi": (round(mc_res.expected_ruin_month)
                            if mc_res.expected_ruin_month else None),
-             "aylik_net": round(monthly_net)},
+             "aylik_net": round(monthly_net),
+             # Kredili senaryo varsa ONUN dibi kaydedilir: defterin sorusu
+             # "bu krediyi çekersem ne olur", taksit yükü de dibi derinleştirir.
+             "en_dip_hafta": round(_kayit_wk.min_week.closing_cash)
+             if _kayit_wk.min_week else None},
         )
 
 # Geri yükleme, tabloyu çizmeden ÖNCE işlenmeli: yoksa dosyayı yükleyen
@@ -747,8 +1317,8 @@ cfo_ctx = {
     "debt_service": debt_service,
     "monthly_net": monthly_net,
     "runway_months": round(runway, 1) if runway else None,
-    "trend_runway_months": trend_rw.months if trend_rw else None,
-    "trend_slope": round(trend_rw.slope_per_month) if trend_rw else None,
+    "trend_runway_months": trend_rw.months,
+    "trend_slope": round(trend_rw.slope_per_month) if trend_rw.available else None,
     "ruin_probability": mc_res.ruin_probability,
     "expected_ruin_month": mc_res.expected_ruin_month,
     "loan_amount": loan_amount,
@@ -759,6 +1329,15 @@ cfo_ctx = {
     "default_without_loan": loan_res["default_without_loan"],
     "top_receivables": data.get("top_receivables", []),
     "expense_breakdown": data.get("expense_breakdown", {}),
+    # Yaşlandırmadan türeyenler: CFO "gecikmiş" ile "hiç gelmeyecek" arasındaki
+    # farkı ancak bu sayıları görürse kurabilir.
+    "expected_uncollectible": round(aging.expected_loss) if aging.available else None,
+    "dso_days": round(aging.dso) if aging.dso else None,
+    "overdue_share": round(aging.overdue_share, 3) if aging.available else None,
+    # Yapısal (bilanço) hüküm — nakit hükmüyle çeliştiğinde CFO bunu kurabilsin
+    "z_score": round(zres.score, 2) if zres.available else None,
+    "z_zone": zres.zone if zres.available else None,
+    "z_model": zres.model_name if zres.available else None,
 }
 
 # "Yeniden çağır" yalnızca GERÇEK bir LLM varsa anlamlı: kural tabanlı motor
@@ -808,7 +1387,7 @@ report_ctx = {
     "net_operating": net_op,
     "debt_service": debt_service,
     "runway_months": round(runway, 1) if runway else None,
-    "trend_runway_months": trend_rw.months if trend_rw else None,
+    "trend_runway_months": trend_rw.months,
     "loan_amount": loan_amount,
     "installment": loan_res["installment"],
     "total_interest": loan_res["total_interest"],
@@ -816,6 +1395,18 @@ report_ctx = {
     "default_with_loan": loan_res["default_with_loan"],
     "base_ruin_pct": ruin_pct,
     "loan_ruin_pct": (mc_loan.ruin_probability * 100) if mc_loan else None,
+    "z_score": round(zres.score, 2) if zres.available else None,
+    "z_zone": zres.zone if zres.available else None,
+    "expected_uncollectible": round(aging.expected_loss) if aging.available else None,
+    "dso_days": round(aging.dso) if aging.dso else None,
+    # 13 haftalık ufkun özeti: aylık tabloların göremediği an
+    "weekly_min_cash": round(dip.closing_cash) if dip else None,
+    "weekly_min_week": f"{dip.start:%d.%m.%Y} haftası" if dip else None,
+    "weekly_end_cash": round(wk.end_cash),
+    "weekly_intramonth_gap": round(wk.intramonth_gap),
+    # Tornado'nun tek cümlelik hükmü
+    "top_driver": tor.top.label if tor.top else None,
+    "top_driver_swing": round(abs(tor.top.swing_pp), 1) if tor.top else 0.0,
     "cfo_text": advice["text"],
     "cfo_source": advice["source"],
 }

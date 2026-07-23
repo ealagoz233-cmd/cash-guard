@@ -26,7 +26,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from modules.data_io import (REQUIRED_HISTORY_COLS, _to_float, load_mock,
-                             normalize_history, parse_uploaded, safe_display_name)
+                             normalize_history, parse_uploaded,
+                             parse_uploaded_files, safe_display_name)
 from utils.theme import esc, expense_label, kpi_card
 
 DEBT_SERVICE_KEY = "existing_monthly_debt_service"
@@ -126,6 +127,271 @@ def test_non_numeric_row_is_skipped():
 def test_unreadable_file_returns_none():
     """Alakasız dosya None dönmeli ki uygulama mock veriye düşsün."""
     assert parse_uploaded(FakeUpload("x.csv", "a,b\n1,2\n")) is None
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  2b) Yüklenen veri, yeni analiz katmanlarını da besliyor mu
+# ══════════════════════════════════════════════════════════════════════════
+# Yaşlandırma, Altman ve haftalık ufuk yalnızca demo veride çalışsaydı dört
+# özellik de vitrin süsü olurdu. Buradaki testler o yolun ucunu tutuyor.
+_ALACAK_CSV = ("musteri,tutar,gecikme_gun\n"
+               "Büyük Bayi A.Ş.,3.000.000,120\n"
+               "Küçük Bayi Ltd.,1.000.000,10\n")
+
+_BILANCO_CSV = ("alan,deger\n"
+                "current_cash,4200000\n"
+                "avg_monthly_revenue,7200000\n"
+                "avg_monthly_fixed_expense,5950000\n"
+                "sector,Üretim / Tekstil\n"
+                "as_of,2026-06-30\n"
+                "company_name,Test Sanayi A.Ş.\n"
+                "total_assets,60000000\n"
+                "current_assets,30000000\n"
+                "current_liabilities,20000000\n"
+                "total_liabilities,28000000\n"
+                "retained_earnings,20000000\n"
+                "annual_depreciation,2800000\n"
+                "gider_personel,2650000\n"
+                "gider_kira_ve_isletme,780000\n"
+                "gider_hammadde_ve_tedarik,2520000\n")
+
+
+def test_uploaded_receivables_feed_the_aging_engine():
+    """Biçim C yüklenince yaşlandırma paneli gerçek veriyle çalışmalı."""
+    from modules.receivables import age
+
+    d = parse_uploaded(FakeUpload("alacak.csv", _ALACAK_CSV))
+    assert d is not None
+    assert len(d["top_receivables"]) == 2
+    # Bakiye verilmediyse kalemlerin toplamı bakiye sayılır.
+    assert d["receivables_outstanding"] == 4_000_000
+    # En büyük kalem başta olmalı (grafik ve CFO metni buna güveniyor)
+    assert d["top_receivables"][0]["amount"] == 3_000_000
+
+    p = age(d["top_receivables"], d["receivables_outstanding"], 2_000_000)
+    assert p.expected_loss == 3_000_000 * 0.50 + 1_000_000 * 0.05
+    assert p.dso == 60.0
+
+
+def test_uploaded_balance_sheet_feeds_the_altman_score():
+    """Biçim A'daki düz bilanço anahtarları iç içe sözlüğe toplanmalı."""
+    from modules import zscore
+
+    d = parse_uploaded(FakeUpload("bilanco.csv", _BILANCO_CSV))
+    assert d is not None
+    assert d["balance_sheet"]["total_assets"] == 60_000_000
+    r = zscore.from_company(d)
+    assert r.available, f"skor üretilmedi: {r.missing_fields}"
+    # Sektörde "Üretim" geçiyor → imalatçı modeli seçilmeli
+    assert r.model_key == zscore.Z_PRIME.key
+
+
+def test_uploaded_text_fields_are_not_treated_as_broken_numbers():
+    """
+    Şirket adı, sektör ve tarih sayı değil. Bunlara "sayıya çevrilemedi" uyarısı
+    vermek, doğru şeyi yapan kullanıcıyı cezalandırmak olurdu.
+    """
+    d = parse_uploaded(FakeUpload("bilanco.csv", _BILANCO_CSV))
+    assert d["company_name"] == "Test Sanayi A.Ş."
+    assert d["as_of"] == "2026-06-30"
+    assert "Üretim" in d["sector"]
+
+
+def test_uploaded_expense_breakdown_makes_the_weekly_view_informative():
+    """`gider_*` anahtarları olmadan haftalık tablo ay-içi bilgi taşıyamaz."""
+    from modules import weekly
+
+    d = parse_uploaded(FakeUpload("bilanco.csv", _BILANCO_CSV))
+    assert set(d["expense_breakdown"]) == {"personel", "kira_ve_isletme",
+                                           "hammadde_ve_tedarik"}
+    plan = weekly.build(d["current_cash"], d["avg_monthly_collections"],
+                        d.get("expense_breakdown"),
+                        d["avg_monthly_fixed_expense"], 0,
+                        start=weekly.parse_start(d["as_of"]))
+    assert plan.informative
+    assert plan.weeks[0].start.isoformat() == "2026-07-01"
+
+
+def test_several_files_merge_into_one_company():
+    """
+    Mizan, aylık rapor ve yaşlandırma kaynak sistemlerde ayrı dosyalardır.
+    Kullanıcıyı elle birleştirmeye zorlamak yerine hepsi kabul edilir; her
+    dosya kendi alanlarını yazar, dokunmadığına karışmaz.
+    """
+    d = parse_uploaded_files([
+        FakeUpload("a.csv", _BILANCO_CSV),
+        FakeUpload("c.csv", _ALACAK_CSV),
+        FakeUpload("b.csv", "month,revenue,fixed_expense,collections\n"
+                            "2026-01,7000000,5900000,6600000\n"
+                            "2026-02,7100000,5950000,6700000\n"),
+    ])
+    assert d is not None
+    assert d["balance_sheet"]["total_assets"] == 60_000_000   # A'dan
+    assert len(d["top_receivables"]) == 2                     # C'den
+    assert len(d["history"]) == 2                             # B'den
+    assert d["avg_monthly_revenue"] == 7_050_000              # B, A'yı ezdi
+
+
+def test_merging_is_order_independent_for_untouched_fields():
+    """Sıra, bir dosyanın DOKUNMADIĞI alanı etkilememeli."""
+    ileri = parse_uploaded_files([FakeUpload("a.csv", _BILANCO_CSV),
+                                  FakeUpload("c.csv", _ALACAK_CSV)])
+    geri = parse_uploaded_files([FakeUpload("c.csv", _ALACAK_CSV),
+                                 FakeUpload("a.csv", _BILANCO_CSV)])
+    assert ileri["balance_sheet"] == geri["balance_sheet"]
+    assert ileri["top_receivables"] == geri["top_receivables"]
+    assert ileri["current_cash"] == geri["current_cash"]
+
+
+def test_one_unrecognised_file_does_not_discard_the_good_ones():
+    """Üç dosyadan biri bozuksa diğer ikisinin verisi çöpe gitmemeli."""
+    d = parse_uploaded_files([FakeUpload("cop.csv", "a,b\n1,2\n"),
+                              FakeUpload("a.csv", _BILANCO_CSV)])
+    assert d is not None
+    assert d["current_cash"] == 4_200_000
+
+
+def test_full_template_round_trips_into_every_optional_group():
+    """
+    Şablonun tek işi var: indir, doldur, yükle. Opsiyonel gruplar (bilanço,
+    gider dağılımı, alacak) şablonda görünüp ayrıştırıcıya ULAŞMAZSA kullanıcı
+    o alanları doldurup hiçbir şeyin değişmediğini görür.
+    """
+    from modules.data_io import (BICIM_A_BILANCO, ornek_sablon)
+
+    class _Dosya(io.BytesIO):
+        name = "cash_guard_sablon.csv"
+
+    d = parse_uploaded(_Dosya(ornek_sablon()))
+    assert d is not None
+    assert set(d["balance_sheet"]) == set(BICIM_A_BILANCO)
+    assert d["expense_breakdown"], "gider dağılımı şablondan okunmadı"
+    assert d["receivables_outstanding"] > 0
+
+
+def test_uploader_can_supply_every_field_the_zscore_needs():
+    """
+    Yükleyicinin bilanço grubu ile Z-score'un istediği alanlar ayrışmamalı.
+
+    Ayrışırsa CSV yükleyen kullanıcı o alanı DOLDURAMAZ: şablonda yoktur,
+    ayrıştırıcı okumaz ve skor kalıcı olarak boş kalır — üstelik ekranda
+    "eksik alan" diye kendi yazamayacağı bir ad görür.
+    """
+    from modules.data_io import BICIM_A_BILANCO
+    from modules.zscore import REQUIRED_FIELDS
+
+    # `annual_sales` ve `ebit_annual` bilerek yok: ikisi de aylık skalerlerden
+    # türetiliyor (bkz. zscore.from_company), kullanıcıdan ayrıca istenmiyor.
+    turetilenler = {"annual_sales", "ebit_annual"}
+    istenen = set(REQUIRED_FIELDS) - turetilenler
+    assert istenen <= set(BICIM_A_BILANCO), (
+        f"yükleyici bu alanları kabul etmiyor: {istenen - set(BICIM_A_BILANCO)}")
+
+
+def test_mock_only_keys_cover_every_writable_group():
+    """
+    Bir biçimin yazabildiği her alan, mock'tan arındırılan listede olmalı.
+
+    Aksi hâlde kullanıcı o grubu yüklediğinde örnek şirketin değeri ekranda
+    kalır ve kendi verisi sanılır — yükleyicinin baştan beri engellediği hata.
+    """
+    from modules.data_io import (BICIM_A_ALACAK, BICIM_A_METIN,
+                                 _MOCK_ONLY_KEYS)
+
+    yazilabilir = ({"history", "top_receivables", "expense_breakdown",
+                    "balance_sheet"} | set(BICIM_A_ALACAK) | set(BICIM_A_METIN))
+    assert yazilabilir <= set(_MOCK_ONLY_KEYS)
+
+
+def test_every_format_a_group_reaches_the_template_and_the_parser():
+    """
+    Alan tablosuna eklenen bir grup, ŞABLONDA da AYRIŞTIRICIDA da görünmeli.
+
+    Üçü (tablo, şablon, ayrıştırıcı) elle senkron tutuluyordu; unutmanın
+    belirtisi sessizdi — kullanıcı ya alanı hiç göremiyor ya da doldurup
+    hiçbir şeyin değişmediğini görüyordu. Bu test o üçlüyü birbirine bağlar.
+    """
+    from modules.data_io import BICIM_A_GRUPLARI, ornek_sablon
+
+    class _Dosya(io.BytesIO):
+        name = "cash_guard_sablon.csv"
+
+    sablon = ornek_sablon().decode("utf-8")
+    d = parse_uploaded(_Dosya(ornek_sablon()))
+    assert d is not None
+
+    for grup in BICIM_A_GRUPLARI:
+        hedef = d.get(grup.hedef, {}) if grup.hedef else d
+        for alan in grup.alanlar:
+            assert f"\n{alan}," in sablon, f"{alan} şablonda yok"
+            if grup.metin:
+                continue      # metin alanları şablonda bilerek boş bırakılır
+            assert alan in hedef, f"{alan} ayrıştırıcıya ulaşmıyor"
+
+
+def test_mock_only_list_follows_the_group_table():
+    """
+    "Taşınmaz" listesi elle sayılmamalı: tabloda `yalniz_mock` işaretli her grup
+    otomatik olarak listeye girmeli, çekirdek skalerler ise GİRMEMELİ.
+
+    Çekirdeğin dışarıda kalması bilinçli — onlarsız uygulama hiçbir şey
+    hesaplayamaz, o yüzden kullanıcı vermezse örnek değer kalır.
+    """
+    from modules.data_io import BICIM_A_GRUPLARI, _MOCK_ONLY_KEYS
+
+    for grup in BICIM_A_GRUPLARI:
+        for anahtar in grup.tasinmaz_anahtarlar:
+            assert anahtar in _MOCK_ONLY_KEYS, f"{anahtar} listede yok"
+        if not grup.yalniz_mock:
+            assert not (set(grup.alanlar) & set(_MOCK_ONLY_KEYS)), (
+                "çekirdek skalerler arındırılırsa uygulama hesap yapamaz")
+
+
+def test_parse_warnings_come_back_as_data_not_as_screen_writes():
+    """
+    Uyarılar ayrıştırmanın DÖNÜŞ değerinin parçası olmalı, yan etkisi değil.
+
+    Ekrana doğrudan yazıldıkları sürece ayrıştırma önbelleğe alınamaz (ikinci
+    koşuda uyarı sessizce kaybolur) ve modül arayüze bağlı kalır.
+    """
+    from modules.data_io import parse_files
+
+    sonuc = parse_files([FakeUpload("cop.csv", "a,b\n1,2\n")])
+    assert sonuc.data is None
+    assert [u.seviye for u in sonuc.uyarilar] == ["error"]
+    assert "cop.csv" in sonuc.uyarilar[0].mesaj
+
+    okunamayan = parse_files([FakeUpload("kirik.csv", "alan,deger\ncurrent_cash,abc\n")])
+    assert okunamayan.data is not None
+    assert any(u.seviye == "warning" for u in okunamayan.uyarilar)
+
+
+def test_comment_rows_in_the_template_are_skipped_not_warned_about():
+    """
+    Şablon ve README, grupları '# ── bilanço ──' satırlarıyla ayırıyor. Bunlar
+    "sayıya çevrilemedi" uyarısı üretseydi, dokümandaki örneği kopyalayan
+    kullanıcı doğru şeyi yaptığı hâlde uyarı alırdı.
+    """
+    d = parse_uploaded(FakeUpload("y.csv",
+                                  "alan,deger\n"
+                                  "# ── bölüm başlığı ──,\n"
+                                  "\n"
+                                  "current_cash,123456\n"))
+    assert d is not None and d["current_cash"] == 123456
+    # Yorum satırı hiçbir gruba sızmamalı
+    assert not any(k.startswith("#") for k in d.get("balance_sheet", {}))
+    assert not any(k.startswith("#") for k in d.get("expense_breakdown", {}))
+
+
+def test_receivables_template_round_trips():
+    """Ürettiğimiz alacak şablonu, kendi ayrıştırıcımızdan geçmeli."""
+    from modules.data_io import ornek_alacak_sablonu
+
+    ham = ornek_alacak_sablonu().decode("utf-8")
+    d = parse_uploaded(FakeUpload("alacaklar.csv", ham))
+    assert d is not None, "kendi ürettiğimiz alacak şablonu ayrıştırılamadı"
+    assert len(d["top_receivables"]) == len(load_mock()["top_receivables"])
+    assert d["receivables_outstanding"] == load_mock()["receivables_outstanding"]
 
 
 def test_normalize_history_fills_missing_columns():

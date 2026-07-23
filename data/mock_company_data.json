@@ -15,8 +15,19 @@
   "_collections_note": "Faturalanan gelir 7.200.000 ama fiilen tahsil edilen sadece 6.800.000. Aradaki ~400K/ay alacaklarda sıkışıyor — nakit modeli bu (tahsilat) rakamını kullanır, faturalanan geliri DEĞİL. Şirketin 'kârlı görünüp nakitsiz batma' hikâyesinin kaynağı budur.",
   "avg_monthly_fixed_expense": 5950000,
 
-  "receivables_outstanding": 9300000,
+  "receivables_outstanding": 18720000,
   "avg_collection_days": 78,
+  "_receivables_note": "Bakiye ile yaşlandırma BİREBİR tutarlıdır ve bu bilerek böyledir. DSO = 18.720.000 ÷ 7.200.000 × 30 = tam 78,0 gün, yani yukarıdaki avg_collection_days alanının ta kendisi. Aşağıdaki top_receivables kalemleri de kuruşu kuruşuna 18.720.000 eder ve ağırlıklı ortalama gecikmeleri 67,8 gündür — 78 > 67,8 olduğu için modules/receivables.py'nin tutarsızlık kontrolü SUSAR. NOT: bu üç sayıdan birini değiştirirsen (bakiye, aylık gelir, kalem tutarları) kontrol tetiklenip demo ekranında sarı uyarı belirir. Kontrol doğru çalışıyor demektir ama vitrin bozulur; ya üçünü birlikte güncelle ya da uyarıyı bilerek bırak.",
+
+  "_balance_sheet_note": "Altman Z-score için eklendi. Yukarıdaki skalerlerle TUTARLI kurulmuştur: dönen varlıkların içinde kasa 4.200.000 ve alacak 18.720.000 aynen yer alır (kalan 11.000.000 stok — tekstil üreticisi), toplam yükümlülüğün içinde de 12.500.000'luk mevcut borç stoku vardır (5.000.000 kısa vadeli taksit + 7.500.000 uzun vadeli) artı 15.500.000 ticari ve diğer kısa vadeli borç. Özkaynak = varlık − yükümlülük = 33.920.000 ve bunun 23.920.000'i geçmiş yıl kârı. Şişmiş alacak BORÇLA DEĞİL özkaynakla finanse edilmiş gösteriliyor, çünkü hikâye tam olarak bu: kâr gerçekten kazanılmış ama nakde dönmemiş, alacakta oturuyor. Yıllık satış ve FVÖK burada SAKLANMAZ, aylık skalerlerden türetilir (12 × (gelir − gider) − amortisman); aynı büyüklüğü iki yere yazmak er geç ikisini ayrıştırır. Amortisman aylık gider kalemlerinin içinde yoktur (onların hepsi nakit çıkışı), o yüzden ayrı veriliyor. SONUÇ BİLEREK ÇARPICI: Z′ = 3,00 ile GÜVENLİ bölge çıkar (eşik 2,90 — kıl payı), Monte Carlo ise %94 batma der. İkisi de doğrudur ve ironi şurada: Altman, şişmiş alacağı işletme sermayesi ve geçmiş yıl kârı olarak ÖDÜLLENDİRİYOR — tam da onun kör noktası. Uygulamanın tezi budur; tests/test_zscore.py bunu kilitliyor, bilanço rakamlarını değiştirirken çalıştır.",
+  "balance_sheet": {
+    "current_assets": 33920000,
+    "current_liabilities": 20500000,
+    "total_assets": 61920000,
+    "total_liabilities": 28000000,
+    "retained_earnings": 23920000,
+    "annual_depreciation": 2800000
+  },
 
   "_history_note": "Tablo, yukarıdaki üst düzey skalerlerle BİREBİR tutarlıdır — ortalamalar tam olarak gelir 7.200.000, tahsilat 6.800.000, gider 5.950.000 verir ve kasa yürüyüşü (cash_end[t] = cash_end[t-1] + tahsilat − gider − 950.000 borç servisi) kuruşu kuruşuna tutar. Hikâye: faturalanan gelir neredeyse SABİT (~7.2M) kalırken tahsilat aylık düşüyor; alacak boşluğu 395K'dan 481K'ya genişliyor. Sonuç: kâğıt üstünde her şey yolunda görünürken kasa hızlanan bir tempoyla 5.75M'den 4.2M'ye eriyor. İlk ay (2025-07) son sağlıklı ay: eski alacaklar tahsil edildiği için boşluk yalnızca 100K. NOT: bu seriyi değiştirirsen ortalamaların ve yürüyüşün hâlâ tuttuğunu doğrula, yoksa KPI kartı ile grafik altı yazı farklı sayı gösterir.",
   "history": [
@@ -35,11 +46,11 @@
   ],
 
   "top_receivables": [
-    { "customer": "Mega Perakende Zinciri A.Ş.", "amount": 3150000, "overdue_days": 92 },
-    { "customer": "Batı Toptan Tekstil Ltd.",     "amount": 2280000, "overdue_days": 74 },
-    { "customer": "Doğu Giyim Dağıtım",           "amount": 1640000, "overdue_days": 61 },
-    { "customer": "Yıldız İhracat Grubu",         "amount": 1230000, "overdue_days": 38 },
-    { "customer": "Diğer (dağınık bayiler)",       "amount": 1000000, "overdue_days": 25 }
+    { "customer": "Mega Perakende Zinciri A.Ş.", "amount": 6350000, "overdue_days": 92 },
+    { "customer": "Batı Toptan Tekstil Ltd.",     "amount": 4590000, "overdue_days": 74 },
+    { "customer": "Doğu Giyim Dağıtım",           "amount": 3300000, "overdue_days": 61 },
+    { "customer": "Yıldız İhracat Grubu",         "amount": 2480000, "overdue_days": 38 },
+    { "customer": "Diğer (dağınık bayiler)",       "amount": 2000000, "overdue_days": 25 }
   ],
 
   "expense_breakdown": {

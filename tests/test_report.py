@@ -97,6 +97,56 @@ def test_report_survives_missing_optional_fields():
     assert data[:5] == b"%PDF-"
 
 
+def test_report_grows_when_the_structural_verdict_is_added():
+    """
+    Altman skoru ve şüpheli alacak rapora gerçekten giriyor mu?
+
+    PDF metnini ayrıştırmak kırılgan olurdu; ölçülebilir ve dürüst kontrol
+    şu: alanlar verildiğinde belge büyümeli. Büyümüyorsa satırlar sessizce
+    düşürülmüş demektir.
+    """
+    yalin = report.build_report(_ctx())
+    zengin = report.build_report(_ctx() | {
+        "z_score": 3.02, "z_zone": "Güvenli",
+        "expected_uncollectible": 2_728_000, "dso_days": 39,
+    })
+    assert len(zengin) > len(yalin), "yapısal hüküm satırları rapora girmemiş"
+
+
+def test_report_carries_the_weekly_trough_and_the_top_lever():
+    """
+    Yönetim kurulu raporu asıl çıktı; ekranda gösterilip rapora girmeyen bir
+    bulgu, toplantıda yok demektir.
+    """
+    yalin = report.build_report(_ctx())
+    zengin = report.build_report(_ctx() | {
+        "weekly_min_cash": 1_812_667, "weekly_min_week": "02.09.2026 haftası",
+        "weekly_end_cash": 3_744_667, "weekly_intramonth_gap": 1_932_000,
+        "top_driver": "Gelir düşüşü", "top_driver_swing": 18.2,
+    })
+    assert len(zengin) > len(yalin), "haftalık dip ve kaldıraç rapora girmemiş"
+
+
+def test_report_survives_a_negative_trough():
+    """En dip hafta eksiye düşmüşse rapor yine üretilmeli (renk kırmızıya döner)."""
+    data = report.build_report(_ctx() | {
+        "weekly_min_cash": -450_000, "weekly_min_week": "02.09.2026 haftası",
+        "weekly_end_cash": 120_000, "weekly_intramonth_gap": 570_000,
+    })
+    assert data[:5] == b"%PDF-"
+
+
+def test_report_stays_silent_without_structural_data():
+    """
+    Kullanıcı kendi CSV'sini yüklediğinde bilanço gelmez. Rapor bu durumda
+    uydurmamalı, sadece o satırları atlamalı — ve yine üretilmeli.
+    """
+    ctx = _ctx() | {"z_score": None, "z_zone": None,
+                    "expected_uncollectible": None, "dso_days": None}
+    data = report.build_report(ctx)
+    assert data[:5] == b"%PDF-"
+
+
 def test_markup_in_text_fields_does_not_break_pdf():
     """
     reportlab'ın Paragraph'ı mini-XML ayrıştırıcıdır: kaçırılmamış bir '<'
