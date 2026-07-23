@@ -442,9 +442,10 @@ cash-guard/
 │   └── report.py                # Yönetim kurulu PDF raporu (reportlab)
 ├── utils/
 │   ├── format.py                # Arayüzden bağımsız biçimlendirme (motor kullanır)
+│   ├── sufficiency.py           # "Yeterli veri var mı" — dört motorun ortak sözleşmesi
 │   ├── theme.py                 # "War-room" karanlık tema, KPI kartları, CSS
 │   └── performance_utils.py     # Numba/NumPy nakit yolu çekirdeği
-├── tests/                       # 243 test, 16 dosya
+├── tests/                       # 245 test, 16 dosya
 │   ├── test_finance_math.py     # Kredi matematiği + Monte Carlo değişmezleri
 │   ├── test_runway.py           # Statik/trend runway, Theil–Sen dayanıklılığı
 │   ├── test_engine_contract.py  # Motorların ortak "yeterli veri var mı" sözleşmesi
@@ -565,7 +566,7 @@ python -m pytest tests/ -q          # pytest ile
 python tests/test_finance_math.py   # ya da tek tek, bağımlılıksız
 ```
 
-**243 test**, on altı dosyada:
+**245 test**, on altı dosyada:
 
 | Dosya | Neyi korur |
 |-------|-----------|
@@ -584,7 +585,7 @@ python tests/test_finance_math.py   # ya da tek tek, bağımlılıksız
 | `test_sensitivity.py` (13) | Tornado sıralaması, sürgü sınırlarının arayüzle uyumu, ortak rastgele sayıların korunması, ekonomik yönün doğruluğu, sınırda kırpma dürüstlüğü |
 | `test_scenario.py` (7) | URL'de taşınan senaryonun tur gidiş-dönüşü, bozuk/eksik parametrede varsayılana düşme |
 | `test_engine_contract.py` (5) | Dört motorun (zscore, receivables, weekly, runway) "yeterli veri var mı" sorusunu AYNI dille cevaplaması; eksik alanların kullanıcının şablonda gerçekten doldurabileceği adlarla bildirilmesi |
-| `test_docs.py` (3) | README'nin kendi hakkında verdiği test sayılarının bayatlamaması |
+| `test_docs.py` (5) | README'nin kendi hakkında verdiği test sayılarının bayatlamaması; **dosya ağacında her kaynak modülün anılması ve silinen bir modülün ağaçta kalmaması** |
 
 En kritik test `test_vectorized_kernel_matches_reference`: Monte Carlo çekirdeği
 performans için `cumsum`/`argmax` hilesi kullanır ve bu hile sessizce yanlış
