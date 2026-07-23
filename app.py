@@ -42,6 +42,7 @@ from modules.data_io import (REQUIRED_HISTORY_COLS, load_mock,
 from modules.report import build_report
 from modules.runway import static_runway, trend_runway
 from utils import theme
+from utils.sufficiency import missing_label
 from utils.theme import COLORS, expense_label, money, threat_color, tr_num
 
 # ── Sayfa yapılandırması + tema ───────────────────────────────────────────
@@ -460,6 +461,17 @@ if zres.available:
             f"şirketi tarihsel olarak batanlarla aynı bölgeye düşürüp "
             f"düşürmediğini söyler."
         )
+else:
+    # Panel sessizce KAYBOLMAMALI. Kullanıcı bilançoyu vermediğinde eskiden
+    # ekranda hiçbir iz kalmıyordu: özelliğin var olduğunu bile öğrenemiyordu.
+    # Eksik alanlar `missing_fields`ten geliyor ve şablonda AYNEN o adla duruyor
+    # (bkz. tests/test_engine_contract.py).
+    st.info(
+        "ℹ️ **Altman Z-score üretilmedi** — yüklediğin veride bilanço yok. "
+        "Yarım veriyle hesaplanmış bir iflas skoru, hiç skor olmamasından "
+        "tehlikelidir, o yüzden uydurulmuyor. Şablondaki şu alanları "
+        f"doldurursan bu kart açılır: `{missing_label(zres)}`."
+    )
 
 hist_df = pd.DataFrame(data.get("history", []))
 rx1, rx2 = st.columns([2, 1])
@@ -586,7 +598,7 @@ aging = receivables.age(
     monthly_revenue=avg_rev,                       # DSO faturalanan gelire göre
 )
 
-if aging.total > 0:
+if aging.available:
     a1, a2, a3 = st.columns(3)
     with a1:
         st.markdown(theme.kpi_card(
@@ -664,6 +676,16 @@ if aging.total > 0:
             f"değerler tavana kırpıldı. Yani sürgüleri uygulasan bile simülasyon "
             f"bu defterden **daha iyimser** kalır."
         )
+else:
+    # Z-score kartıyla aynı gerekçe: özellik sessizce yok olmasın, neyin
+    # eksik olduğu kullanıcının doldurabileceği adla söylensin.
+    st.info(
+        "ℹ️ **Alacak yaşlandırma paneli açılmadı** — yüklediğin veride alacak "
+        "bakiyesi ya da yaşlandırma listesi yok. Tahmini bir bakiye uydurmak, "
+        "olmayan bir bilgiyi varmış gibi göstermek olurdu. Şablonda "
+        f"`{missing_label(aging)}` alanlarını doldurursan DSO, şüpheli alacak "
+        "ve türetilmiş gecikme profili burada çıkar."
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -872,7 +894,7 @@ st.caption(
     f"tek güne yığmak, olmayan bir bilgiyi varmış gibi göstermek olurdu."
 )
 
-if not wk.informative:
+if not wk.available:
     # Her şey aya yayılmışsa haftalık eğri, aylık çizginin ince çizilmiş hâlidir.
     st.info(
         "ℹ️ Yüklediğin veride gider dağılımı yok, bu yüzden tüm çıkışlar aya "
@@ -945,7 +967,7 @@ with w3:
         accent=COLORS["alarm"] if ilk_eksi else COLORS["guardian"]),
         unsafe_allow_html=True)
 
-if wk.informative and dip is not None:
+if wk.available and dip is not None:
     st.markdown(
         f'<div style="border-left:3px solid {COLORS["amber"]};'
         f'background:{COLORS["panel"]};padding:12px 16px;border-radius:10px;'
@@ -1309,9 +1331,9 @@ cfo_ctx = {
     "expense_breakdown": data.get("expense_breakdown", {}),
     # Yaşlandırmadan türeyenler: CFO "gecikmiş" ile "hiç gelmeyecek" arasındaki
     # farkı ancak bu sayıları görürse kurabilir.
-    "expected_uncollectible": round(aging.expected_loss) if aging.total else None,
+    "expected_uncollectible": round(aging.expected_loss) if aging.available else None,
     "dso_days": round(aging.dso) if aging.dso else None,
-    "overdue_share": round(aging.overdue_share, 3) if aging.total else None,
+    "overdue_share": round(aging.overdue_share, 3) if aging.available else None,
     # Yapısal (bilanço) hüküm — nakit hükmüyle çeliştiğinde CFO bunu kurabilsin
     "z_score": round(zres.score, 2) if zres.available else None,
     "z_zone": zres.zone if zres.available else None,
@@ -1375,7 +1397,7 @@ report_ctx = {
     "loan_ruin_pct": (mc_loan.ruin_probability * 100) if mc_loan else None,
     "z_score": round(zres.score, 2) if zres.available else None,
     "z_zone": zres.zone if zres.available else None,
-    "expected_uncollectible": round(aging.expected_loss) if aging.total else None,
+    "expected_uncollectible": round(aging.expected_loss) if aging.available else None,
     "dso_days": round(aging.dso) if aging.dso else None,
     # 13 haftalık ufkun özeti: aylık tabloların göremediği an
     "weekly_min_cash": round(dip.closing_cash) if dip else None,

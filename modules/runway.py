@@ -13,9 +13,14 @@ bu uygulamanın asıl mesajıdır:
     hızı sabit değil ARTAN bir seridir. Bu, kasayı statik hesabın söylediğinden
     çok daha erken bitirir.
 
-Demo şirketinde statik hesap ~42 ay derken trend hesabı ~14 ay diyor; Monte
+Demo şirketinde statik hesap ~42 ay derken trend hesabı ~10 ay diyor; Monte
 Carlo'nun stresli beklentisi ise ~8. ay. Üçü birlikte "statik hesap seni
 kandırır" mesajını sayıyla kurar.
+
+Bu üç sayı `tests/test_runway.py::test_module_docstring_quotes_the_real_demo_ladder`
+ile demo verisine bağlıdır. Serbest bırakılınca bayatladılar: veri yeniden
+kalibre edildi, buradaki cümle eski rakamı söylemeye devam etti. Kendi hakkında
+yanlış konuşan bir modül, kullanıcıya yanlış konuşan bir uygulamanın provasıdır.
 
 Not: Trend doğrusal (birinci derece) uzatılır. Bilinçli olarak basit tutuldu —
 12 gözlemle daha yüksek dereceli bir uydurma, sinyal değil gürültü modellemeye

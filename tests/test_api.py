@@ -387,3 +387,38 @@ if __name__ == "__main__":
                 failed += 1
     print(f"\n{passed} geçti, {failed} kaldı")
     sys.exit(1 if failed else 0)
+
+
+def test_every_panel_endpoint_answers_the_shared_contract():
+    """
+    Dört motorun ortak sözleşmesi (bkz. utils/sufficiency.py) HTTP cevabında da
+    ortak olmalı.
+
+    Olmazsa istemci her uç için ayrı bir "veri yeterli mi" deyimi öğrenir:
+    biri `informative`, biri `total > 0`, biri `missing_fields`. Motor tarafında
+    birleştirilen sözleşmenin dış dünyada üç parçaya ayrılması, birleştirmeyi
+    yarım bırakmak olurdu.
+    """
+    uclar = {
+        "/receivables": {"receivables": [], "total_outstanding": 0,
+                         "monthly_revenue": 0},
+        "/weekly": {"current_cash": 1_000_000, "monthly_collections": 500_000,
+                    "monthly_fixed_expense": 400_000, "monthly_debt_service": 0},
+        # /zscore alanlari ZORUNLU ister (422); "yetersiz veri" hali burada
+        # anlamsiz bir bilancodur: sifir varlikla hicbir oran kurulamaz.
+        "/zscore": {"total_assets": 0, "current_assets": 0,
+                    "current_liabilities": 0, "total_liabilities": 0,
+                    "retained_earnings": 0, "ebit_annual": 0},
+    }
+    for yol, govde in uclar.items():
+        cevap = client.post(yol, json=govde)
+        assert cevap.status_code == 200, yol
+        veri = cevap.json()
+        assert veri["available"] is False, f"{yol} boş veriyle konuşuyor"
+        assert isinstance(veri["missing_fields"], list), yol
+
+    # `informative` eski adı, `available` ile ayrışmamalı.
+    dolu = client.post("/weekly", json={
+        "current_cash": 1_000_000, "monthly_collections": 500_000,
+        "monthly_fixed_expense": 400_000, "monthly_debt_service": 120_000}).json()
+    assert dolu["informative"] == dolu["available"] is True

@@ -109,6 +109,30 @@ def test_insufficient_data_says_so_instead_of_vanishing():
         assert trend.missing_fields, "eksik olan alan adıyla söylenmeli"
 
 
+def test_module_docstring_quotes_the_real_demo_ladder():
+    """
+    `runway.py` başlığındaki "42 ay / 10 ay" merdiveni demo verisiyle tutmalı.
+
+    Serbest bırakıldığında bayatladı: demo verisi yeniden kalibre edildi, cümle
+    eski rakamı (14 ay) söylemeye devam etti. README'nin kendi test sayısını
+    testle bağladığımız gerekçenin aynısı — kendi hakkında yanlış konuşan bir
+    modül, kullanıcıya yanlış konuşan bir uygulamanın provasıdır.
+    """
+    import re
+
+    import modules.runway as rw
+
+    d = load_mock()
+    ds = d["existing_monthly_debt_service"]
+    net = d["avg_monthly_collections"] - d["avg_monthly_fixed_expense"] - ds
+
+    m = re.search(r"statik hesap ~(\d+) ay derken trend hesabı ~(\d+) ay",
+                  rw.__doc__)
+    assert m, "modül başlığındaki merdiven cümlesi bulunamadı"
+    assert int(m.group(1)) == round(static_runway(d["current_cash"], net))
+    assert int(m.group(2)) == trend_runway(d["history"], d["current_cash"], ds).months
+
+
 def test_no_ruin_on_the_horizon_is_not_confused_with_missing_data():
     """`available=True, months=None` iyi haberdir; eksik veriyle karışmamalı."""
     hist = [{"month": f"{i}", "collections": 6_000_000 + 50_000 * i,

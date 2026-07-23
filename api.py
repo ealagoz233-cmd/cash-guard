@@ -267,6 +267,11 @@ def yaslandirma(istek: YaslandirmaIstegi) -> dict:
     )
     turetilen = receivables.implied_stress(profil)
     return {
+        # `available`/`missing_fields` dört motorda da AYNI iki alan (bkz.
+        # utils/sufficiency.py): istemci her uç için ayrı bir "veri yeterli mi"
+        # deyimi öğrenmek zorunda kalmasın diye.
+        "available": profil.available,
+        "missing_fields": profil.missing_fields,
         "total": profil.total,
         "listed_amount": profil.listed_amount,
         "unlisted_amount": profil.unlisted_amount,
@@ -371,6 +376,10 @@ def haftalik(istek: HaftalikIstek) -> dict:
     return {
         "opening_cash": plan.opening_cash,
         "end_cash": plan.end_cash,
+        "available": plan.available,
+        "missing_fields": plan.missing_fields,
+        # `informative` bu semada onceden vardi; `available` ile AYNI degeri
+        # tasiyor ve istemcileri kirmamak icin duruyor.
         "informative": plan.informative,
         "dated_items": plan.dated_items,
         "intramonth_gap": plan.intramonth_gap,
@@ -415,6 +424,7 @@ def z_skoru(istek: ZSkorIstegi) -> dict:
         "safe_above": sonuc.safe_above,
         "distress_below": sonuc.distress_below,
         "distance_to_safe": sonuc.distance_to_safe,
+        "available": sonuc.available,
         "missing_fields": sonuc.missing_fields,
         "components": [
             {"key": c.key, "label": c.label, "ratio": c.ratio,

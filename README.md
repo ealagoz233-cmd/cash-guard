@@ -432,7 +432,7 @@ cash-guard/
 │   ├── format.py                # Arayüzden bağımsız biçimlendirme (motor kullanır)
 │   ├── theme.py                 # "War-room" karanlık tema, KPI kartları, CSS
 │   └── performance_utils.py     # Numba/NumPy nakit yolu çekirdeği
-├── tests/                       # 235 test, 16 dosya
+├── tests/                       # 237 test, 16 dosya
 │   ├── test_finance_math.py     # Kredi matematiği + Monte Carlo değişmezleri
 │   ├── test_runway.py           # Statik/trend runway, Theil–Sen dayanıklılığı
 │   ├── test_engine_contract.py  # Motorların ortak "yeterli veri var mı" sözleşmesi
@@ -553,7 +553,7 @@ python -m pytest tests/ -q          # pytest ile
 python tests/test_finance_math.py   # ya da tek tek, bağımlılıksız
 ```
 
-**235 test**, on altı dosyada:
+**237 test**, on altı dosyada:
 
 | Dosya | Neyi korur |
 |-------|-----------|
@@ -562,9 +562,9 @@ python tests/test_finance_math.py   # ya da tek tek, bağımlılıksız
 | `test_app_wiring.py` (14) | Arayüz kablolaması: Streamlit `AppTest` ile uçtan uca kaydetme, geri yükleme ve paylaşılabilir link akışı |
 | `test_ai_cfo.py` (13) | Sağlayıcı sırası ve hataya karşı bir sonrakine geçiş, anahtarsız kural tabanlı motora düşüş, teşhis mesajı, anahtarın çıktıya sızmaması |
 | `test_report.py` (14) | PDF gerçekten üretiliyor mu, Türkçe karakter için font seçimi ve para birimi kararı |
-| `test_api.py` (18) | HTTP uçlarının sözleşmesi, girdi doğrulama ve iterasyon tavanı, **API'nin motorla aynı sayıyı vermesi**, arayüz yığını import edilemezken bile ayağa kalkması |
+| `test_api.py` (19) | HTTP uçlarının sözleşmesi, girdi doğrulama ve iterasyon tavanı, **API'nin motorla aynı sayıyı vermesi**, arayüz yığını import edilemezken bile ayağa kalkması |
 | `test_store.py` (11) | Senaryo defteri sözleşmesi: kayıt kaybolmaz, bozuk JSON uygulamayı çökertmez |
-| `test_runway.py` (9) | Statik/trend runway ayrışması, Theil–Sen'in aykırı değere dayanıklılığı, yetersiz veride güvenli geri çekilme |
+| `test_runway.py` (10) | Statik/trend runway ayrışması, Theil–Sen'in aykırı değere dayanıklılığı, yetersiz veride güvenli geri çekilme |
 | `test_weekly.py` (17) | Aylık toplamların güne dağıtılırken korunması, ödeme günlerinin doğru haftaya düşmesi, olmayan ayın 31'inin son güne çekilmesi, gider dağılımı yokken "bu tablo bilgi taşımıyor" itirafı |
 | `test_zscore.py` (18) | Altman katsayılarının ve bölge eşiklerinin elle hesaplanmış değerlerle uyumu, model seçimi, eksik veride skor ÜRETMEME, borçsuz şirkette sonsuza kaçmama, "Altman güvenli der / nakit batıyor der" tezinin kilitlenmesi |
 | `test_receivables.py` (19) | Kova sınırlarının etiketleriyle uyumu, şüpheli alacak aritmetiği, DSO, bakiye ile yaşlandırmanın çelişkisinin yakalanması, türetilmiş sürgülerin ölçülen kaymayı vermesi, bozuk veride çökmeme |
