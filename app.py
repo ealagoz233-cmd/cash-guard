@@ -335,7 +335,7 @@ with k3:
     ), unsafe_allow_html=True)
 with k4:
     # Statik hesabın yanıltıcılığını kartın kendisinde göster: sabit gidiş vs trend.
-    if runway and trend_rw and trend_rw.months:
+    if runway and trend_rw.available and trend_rw.months:
         net_sub = f"Sabit gidişle ~{runway:.0f} ay · trend sürerse ~{trend_rw.months} ay"
     elif runway:
         net_sub = f"Sabit gidişle ~{runway:.0f} ay ömür"
@@ -351,7 +351,7 @@ with k4:
 # ── Nakit ömrü merdiveni ──────────────────────────────────────────────────
 # Üç hesap üç farklı cevap veriyor ve aradaki uçurum uygulamanın asıl tezi:
 # "kasam 42 ay dayanır" diyen statik hesap, bozulmayı ve oynaklığı yok sayıyor.
-if runway and trend_rw and trend_rw.months:
+if runway and trend_rw.available and trend_rw.months:
     n_hist = len(data.get("history", []))
     stres_notu = (
         f"; Monte Carlo stresi altında beklenen temerrüt **{mc_res.expected_ruin_month:.0f}. ay**"
@@ -1295,8 +1295,8 @@ cfo_ctx = {
     "debt_service": debt_service,
     "monthly_net": monthly_net,
     "runway_months": round(runway, 1) if runway else None,
-    "trend_runway_months": trend_rw.months if trend_rw else None,
-    "trend_slope": round(trend_rw.slope_per_month) if trend_rw else None,
+    "trend_runway_months": trend_rw.months,
+    "trend_slope": round(trend_rw.slope_per_month) if trend_rw.available else None,
     "ruin_probability": mc_res.ruin_probability,
     "expected_ruin_month": mc_res.expected_ruin_month,
     "loan_amount": loan_amount,
@@ -1365,7 +1365,7 @@ report_ctx = {
     "net_operating": net_op,
     "debt_service": debt_service,
     "runway_months": round(runway, 1) if runway else None,
-    "trend_runway_months": trend_rw.months if trend_rw else None,
+    "trend_runway_months": trend_rw.months,
     "loan_amount": loan_amount,
     "installment": loan_res["installment"],
     "total_interest": loan_res["total_interest"],

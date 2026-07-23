@@ -303,6 +303,69 @@ def test_mock_only_keys_cover_every_writable_group():
     assert yazilabilir <= set(_MOCK_ONLY_KEYS)
 
 
+def test_every_format_a_group_reaches_the_template_and_the_parser():
+    """
+    Alan tablosuna eklenen bir grup, ŞABLONDA da AYRIŞTIRICIDA da görünmeli.
+
+    Üçü (tablo, şablon, ayrıştırıcı) elle senkron tutuluyordu; unutmanın
+    belirtisi sessizdi — kullanıcı ya alanı hiç göremiyor ya da doldurup
+    hiçbir şeyin değişmediğini görüyordu. Bu test o üçlüyü birbirine bağlar.
+    """
+    from modules.data_io import BICIM_A_GRUPLARI, ornek_sablon
+
+    class _Dosya(io.BytesIO):
+        name = "cash_guard_sablon.csv"
+
+    sablon = ornek_sablon().decode("utf-8")
+    d = parse_uploaded(_Dosya(ornek_sablon()))
+    assert d is not None
+
+    for grup in BICIM_A_GRUPLARI:
+        hedef = d.get(grup.hedef, {}) if grup.hedef else d
+        for alan in grup.alanlar:
+            assert f"\n{alan}," in sablon, f"{alan} şablonda yok"
+            if grup.metin:
+                continue      # metin alanları şablonda bilerek boş bırakılır
+            assert alan in hedef, f"{alan} ayrıştırıcıya ulaşmıyor"
+
+
+def test_mock_only_list_follows_the_group_table():
+    """
+    "Taşınmaz" listesi elle sayılmamalı: tabloda `yalniz_mock` işaretli her grup
+    otomatik olarak listeye girmeli, çekirdek skalerler ise GİRMEMELİ.
+
+    Çekirdeğin dışarıda kalması bilinçli — onlarsız uygulama hiçbir şey
+    hesaplayamaz, o yüzden kullanıcı vermezse örnek değer kalır.
+    """
+    from modules.data_io import BICIM_A_GRUPLARI, _MOCK_ONLY_KEYS
+
+    for grup in BICIM_A_GRUPLARI:
+        for anahtar in grup.tasinmaz_anahtarlar:
+            assert anahtar in _MOCK_ONLY_KEYS, f"{anahtar} listede yok"
+        if not grup.yalniz_mock:
+            assert not (set(grup.alanlar) & set(_MOCK_ONLY_KEYS)), (
+                "çekirdek skalerler arındırılırsa uygulama hesap yapamaz")
+
+
+def test_parse_warnings_come_back_as_data_not_as_screen_writes():
+    """
+    Uyarılar ayrıştırmanın DÖNÜŞ değerinin parçası olmalı, yan etkisi değil.
+
+    Ekrana doğrudan yazıldıkları sürece ayrıştırma önbelleğe alınamaz (ikinci
+    koşuda uyarı sessizce kaybolur) ve modül arayüze bağlı kalır.
+    """
+    from modules.data_io import parse_files
+
+    sonuc = parse_files([FakeUpload("cop.csv", "a,b\n1,2\n")])
+    assert sonuc.data is None
+    assert [u.seviye for u in sonuc.uyarilar] == ["error"]
+    assert "cop.csv" in sonuc.uyarilar[0].mesaj
+
+    okunamayan = parse_files([FakeUpload("kirik.csv", "alan,deger\ncurrent_cash,abc\n")])
+    assert okunamayan.data is not None
+    assert any(u.seviye == "warning" for u in okunamayan.uyarilar)
+
+
 def test_comment_rows_in_the_template_are_skipped_not_warned_about():
     """
     Şablon ve README, grupları '# ── bilanço ──' satırlarıyla ayırıyor. Bunlar

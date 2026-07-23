@@ -77,8 +77,9 @@ class WeeklyPlan:
     opening_cash: float = 0.0
     dated_items: list[str] = field(default_factory=list)
 
+    # ── Ortak "yeterli veri var mı" sözleşmesi (utils/sufficiency.py) ─────
     @property
-    def informative(self) -> bool:
+    def available(self) -> bool:
         """
         Tablo ay-içi bilgi taşıyor mu? (bkz. modül başlığı)
 
@@ -88,6 +89,23 @@ class WeeklyPlan:
         uyarısı olurdu.
         """
         return bool(self.dated_items)
+
+    @property
+    def missing_fields(self) -> list[str]:
+        """
+        Tarihli kalem yoksa eksik olan şey gider DAĞILIMIDIR: ödeme günleri
+        kalem adından bulunuyor (bkz. `dated_items`). Tablo yine kurulur, ama
+        ay-içi çukuru gösteremez.
+        """
+        return [] if self.available else ["expense_breakdown"]
+
+    # `informative` sözleşmenin ortak adından ÖNCE vardı ve API cevabında da
+    # yayınlanıyor; adı sabit kalsın diye takma ad olarak duruyor. Tek gerçek
+    # `available`, dolayısıyla ikisi ayrışamaz.
+    @property
+    def informative(self) -> bool:
+        """`available` ile aynı — API şemasında bu adla yayınlanıyor."""
+        return self.available
 
     @property
     def min_week(self) -> WeekRow | None:

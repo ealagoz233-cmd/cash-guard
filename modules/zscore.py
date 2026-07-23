@@ -255,6 +255,26 @@ def compute(balance_sheet: dict, model: Model = Z_DOUBLE_PRIME) -> ZScoreResult:
     return bos
 
 
+# Kullanıcıdan AYRICA istenmeyen, aylık skalerlerden türetilen alanlar. Eksik
+# listesinde bu adlarla görünmeleri yanıltıcı olurdu: şablonda böyle bir satır
+# yok, kullanıcı ekranda gördüğü adı arar ve bulamaz. Karşılığında türetildikleri
+# — ve gerçekten doldurulabilen — alanların adı söylenir.
+_DERIVED_FROM = {
+    "annual_sales": ("avg_monthly_revenue",),
+    "ebit_annual": ("avg_monthly_revenue", "avg_monthly_fixed_expense"),
+}
+
+
+def _user_fields(missing: list[str]) -> list[str]:
+    """Eksik alan adlarını kullanıcının FİİLEN doldurabileceği adlara çevirir."""
+    out: list[str] = []
+    for alan in missing:
+        for ad in _DERIVED_FROM.get(alan, (alan,)):
+            if ad not in out:
+                out.append(ad)
+    return out
+
+
 def from_company(data: dict) -> ZScoreResult:
     """
     Uygulamanın şirket sözlüğünden Z-score üretir.
@@ -263,10 +283,16 @@ def from_company(data: dict) -> ZScoreResult:
     skalerlerden TÜRETİLİR: aynı büyüklüğü iki yere yazmak, er geç ikisinin
     ayrışması demektir. Amortisman bilançoyla birlikte verilir çünkü aylık gider
     kalemlerinin içinde yoktur (hepsi nakit çıkışıdır).
+
+    Eksik alanlar da bu yüzden çevrilerek bildirilir: `compute` ham bilançonun
+    dilini konuşur (`ebit_annual`), bu fonksiyon ise kullanıcının şablonda
+    göreceği dili.
     """
     bs = dict(data.get("balance_sheet") or {})
     if not bs:
-        return _empty(pick_model(data.get("sector")), list(REQUIRED_FIELDS))
+        bos = _empty(pick_model(data.get("sector")), list(REQUIRED_FIELDS))
+        bos.missing_fields = _user_fields(bos.missing_fields)
+        return bos
 
     aylik_gelir = as_float(data.get("avg_monthly_revenue")) or 0.0
     aylik_gider = as_float(data.get("avg_monthly_fixed_expense")) or 0.0
@@ -275,4 +301,6 @@ def from_company(data: dict) -> ZScoreResult:
     bs.setdefault("annual_sales", aylik_gelir * 12)
     bs.setdefault("ebit_annual", (aylik_gelir - aylik_gider) * 12 - amortisman)
 
-    return compute(bs, pick_model(data.get("sector")))
+    sonuc = compute(bs, pick_model(data.get("sector")))
+    sonuc.missing_fields = _user_fields(sonuc.missing_fields)
+    return sonuc

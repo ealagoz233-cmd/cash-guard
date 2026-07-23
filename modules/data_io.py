@@ -25,12 +25,35 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "mock_company_data.json"
+
+
+@dataclass(frozen=True)
+class Uyari:
+    """Ayrıştırma sırasında kullanıcıya söylenmesi gereken tek bir mesaj."""
+    seviye: str      # "warning" | "error"
+    mesaj: str
+
+
+@dataclass
+class YuklemeSonucu:
+    """
+    Ayrıştırmanın TAM çıktısı: veri + kullanıcıya söylenecekler.
+
+    Uyarılar eskiden doğrudan `st.sidebar`a yazılıyordu. İki sonucu vardı:
+    ayrıştırma önbelleğe alınamıyordu (önbellekten dönen çağrı hiçbir uyarı
+    üretmez, yani ikinci koşuda "şu satır atlandı" uyarısı sessizce kaybolurdu)
+    ve modül arayüze bağlıydı. Uyarı artık veridir; nereye yazılacağına çağıran
+    karar verir.
+    """
+    data: dict | None
+    uyarilar: list[Uyari] = field(default_factory=list)
 
 # Geçmiş trend grafiğinin çizilebilmesi için gereken asgari sütunlar.
 REQUIRED_HISTORY_COLS = {"month", "revenue"}
@@ -143,50 +166,110 @@ def _to_float(value) -> float:
     return float(s)
 
 
-# Biçim A'da okunan alanlar ve şablondaki açıklamaları. Tek kaynak: hem
-# ayrıştırıcı hem indirilen örnek şablon buradan beslenir. Ayrı ayrı yazılsalar
-# kod değiştiğinde şablon sessizce yanlışa döner ve kullanıcı, uygulamanın
-# görmediği bir alanı doldurup neden değişmediğini anlamaz.
-BICIM_A_ALANLARI = {
-    "current_cash": "Bugünkü kasa / banka toplamı",
-    "avg_monthly_revenue": "Aylık ortalama FATURALANAN gelir",
-    "avg_monthly_collections": "Aylık ortalama TAHSİL EDİLEN nakit",
-    "avg_monthly_fixed_expense": "Aylık ortalama sabit gider",
-    "existing_debt": "Mevcut toplam borç stoku",
-    "existing_monthly_debt_service": "Aylık borç servisi (taksit)",
-}
+# ══════════════════════════════════════════════════════════════════════════
+#  BİÇİM A ALAN TABLOSU — tek kaynak
+# ══════════════════════════════════════════════════════════════════════════
+# Biçim A'nın okuduğu her alan tam olarak BİR yerde tanımlıdır. Üç ayrı tüketici
+# bu tablodan beslenir: ayrıştırıcı, indirilebilir örnek şablon ve "kullanıcı
+# verisine taşınmaması gereken mock alanları" listesi. Eskiden üçü de grupları
+# elle geziyordu; yeni bir grup eklemek üç yerde daha düzenleme gerektiriyordu
+# ve unutulan yerin belirtisi sessizdi — şablonda görünmeyen bir alan, ya da
+# kullanıcının kendi raporunda duran örnek şirket rakamı.
+@dataclass(frozen=True)
+class AlanGrubu:
+    """Biçim A'da birlikte anlam taşıyan bir alan kümesi."""
+    alanlar: dict[str, str]        # alan adı -> şablondaki açıklaması
+    baslik: str = ""               # şablonda bu grubun üstüne yazılan yorum
+    baslik_notu: str = ""          # o yorumun açıklama sütunu
+    hedef: str | None = None       # None: kök sözlük; str: iç içe sözlük anahtarı
+    metin: bool = False            # sayıya çevrilmez, düz metin olarak alınır
+    yalniz_mock: bool = True       # kullanıcı verisine taşınmamalı mı
+
+    @property
+    def tasinmaz_anahtarlar(self) -> tuple[str, ...]:
+        """Kullanıcı verisine sızmaması gereken KÖK sözlük anahtarları."""
+        if not self.yalniz_mock:
+            return ()
+        return (self.hedef,) if self.hedef else tuple(self.alanlar)
+
+
+# Çekirdek skalerler. `yalniz_mock=False` bilerek: kullanıcı bunları vermezse
+# örnek şirketin değeri kalır, çünkü bunlarsız uygulama hiçbir şey hesaplayamaz.
+# Diğer gruplar için tam tersi geçerli — eksik bilgi, uydurma bilgiden iyidir.
+_G_CEKIRDEK = AlanGrubu(
+    yalniz_mock=False,
+    alanlar={
+        "current_cash": "Bugünkü kasa / banka toplamı",
+        "avg_monthly_revenue": "Aylık ortalama FATURALANAN gelir",
+        "avg_monthly_collections": "Aylık ortalama TAHSİL EDİLEN nakit",
+        "avg_monthly_fixed_expense": "Aylık ortalama sabit gider",
+        "existing_debt": "Mevcut toplam borç stoku",
+        "existing_monthly_debt_service": "Aylık borç servisi (taksit)",
+    },
+)
 
 # Alacak tarafı. Verilmezse yaşlandırma/DSO/şüpheli alacak paneli GİZLENİR;
 # tahmini bir bakiye uydurmak, olmayan bir bilgiyi varmış gibi göstermek olurdu.
-BICIM_A_ALACAK = {
-    "receivables_outstanding": "Toplam alacak bakiyesi (yaşlandırma paneli için)",
-    "avg_collection_days": "Beyan ettiğin ortalama tahsilat günü (opsiyonel)",
-}
+_G_ALACAK = AlanGrubu(
+    baslik="opsiyonel: alacak tarafı",
+    baslik_notu="Vermezsen yaşlandırma paneli gizlenir",
+    alanlar={
+        "receivables_outstanding": "Toplam alacak bakiyesi (yaşlandırma paneli için)",
+        "avg_collection_days": "Beyan ettiğin ortalama tahsilat günü (opsiyonel)",
+    },
+)
 
 # Altman Z-score bileşenleri. Eksikse skor ÜRETİLMEZ (bkz. modules/zscore.py):
 # yarım veriyle hesaplanmış bir iflas skoru, hiç skor olmamasından tehlikelidir.
-BICIM_A_BILANCO = {
-    "total_assets": "Toplam varlık (Altman Z-score için)",
-    "current_assets": "Dönen varlık",
-    "current_liabilities": "Kısa vadeli yükümlülük",
-    "total_liabilities": "Toplam yükümlülük",
-    "retained_earnings": "Geçmiş yıl kârları (birikmiş)",
-    "annual_depreciation": "Yıllık amortisman (aylık giderlerin içinde değilse)",
-}
+_G_BILANCO = AlanGrubu(
+    baslik="opsiyonel: bilanço (Altman Z-score)",
+    baslik_notu="Eksikse skor üretilmez",
+    hedef="balance_sheet",
+    alanlar={
+        "total_assets": "Toplam varlık (Altman Z-score için)",
+        "current_assets": "Dönen varlık",
+        "current_liabilities": "Kısa vadeli yükümlülük",
+        "total_liabilities": "Toplam yükümlülük",
+        "retained_earnings": "Geçmiş yıl kârları (birikmiş)",
+        "annual_depreciation": "Yıllık amortisman (aylık giderlerin içinde değilse)",
+    },
+)
 
 # Sayı OLMAYAN alanlar. Bunları da kabul etmek şart: aksi hâlde kullanıcı
 # şablona tarih ya da sektör yazdığında "sayıya çevrilemedi" uyarısı alırdı —
 # doğru şeyi yapıp uyarı almak, aracın kullanıcıyı cezalandırması demektir.
-BICIM_A_METIN = {
-    "company_name": "Şirket adı (ekranda ve PDF raporunda görünür)",
-    "sector": "Sektör — üretim/imalat yazarsan Altman Z′ modeli seçilir",
-    "as_of": "Veri tarihi YYYY-AA-GG (13 haftalık takvim ertesi gün başlar)",
-}
+_G_METIN = AlanGrubu(
+    baslik="opsiyonel: metin alanları",
+    baslik_notu="Boş bırakılabilir",
+    metin=True,
+    alanlar={
+        "company_name": "Şirket adı (ekranda ve PDF raporunda görünür)",
+        "sector": "Sektör — üretim/imalat yazarsan Altman Z′ modeli seçilir",
+        "as_of": "Veri tarihi YYYY-AA-GG (13 haftalık takvim ertesi gün başlar)",
+    },
+)
+
+# Şablondaki ve ayrıştırıcıdaki sıra buradan gelir: tek liste, tek sıra.
+BICIM_A_GRUPLARI: tuple[AlanGrubu, ...] = (_G_CEKIRDEK, _G_ALACAK,
+                                           _G_BILANCO, _G_METIN)
 
 # Gider dağılımı düz anahtarlarla verilir: 'gider_personel', 'gider_kira_ve_isletme'…
 # 13 haftalık ufuk ödeme günlerini kalem ADINDAN bulduğu için bu isimler önemli;
 # dağılım verilmezse haftalık tablo kurulur ama ay-içi bilgi taşımaz.
 GIDER_ONEKI = "gider_"
+GIDER_HEDEF = "expense_breakdown"
+
+# Biçim B ve C'nin yazdığı kök anahtarlar — mock sızıntısı listesi bunlardan da
+# beslensin diye burada adlandırıldı, aşağıda elle sayılmadı.
+BICIM_B_YAZAR = ("history",)
+BICIM_C_YAZAR = ("top_receivables",)
+
+# Geriye dönük adlar: modülün sözlüğü bunlarla konuşuyor (README, testler,
+# şablon açıklamaları). Artık kopya değil, tablonun görünümleri.
+BICIM_A_ALANLARI = _G_CEKIRDEK.alanlar
+BICIM_A_ALACAK = _G_ALACAK.alanlar
+BICIM_A_BILANCO = _G_BILANCO.alanlar
+BICIM_A_METIN = _G_METIN.alanlar
 
 # Biçim C sütun adları — Türkçe ve İngilizce kabul edilir.
 _ALACAK_SUTUNLARI = {
@@ -204,18 +287,17 @@ def _sutun_bul(cols: set[str], adaylar) -> str | None:
 # gereken alanlar: taşınırsa ekranda başka bir şirketin grafikleri kullanıcının
 # rakamlarıymış gibi görünür.
 #
-# Elle sayılmıyor, YAZILABİLİR ALANLARDAN türetiliyor. "Hangi mock alanı
-# sızabilir" sorusunun cevabı zaten "bir biçimin yazabildiği her alan"; ikisini
-# ayrı tutmak, yeni bir alan eklendiğinde onu bu listeye eklemeyi unutmak
-# demekti — ve unutmanın belirtisi, kullanıcının kendi raporunda örnek şirketin
-# rakamını görmesi olurdu.
+# Elle sayılmıyor, ALAN TABLOSUNDAN türetiliyor. "Hangi mock alanı sızabilir"
+# sorusunun cevabı zaten "bir biçimin yazabildiği her alan"; ikisini ayrı
+# tutmak, yeni bir alan eklendiğinde onu bu listeye eklemeyi unutmak demekti —
+# ve unutmanın belirtisi, kullanıcının kendi raporunda örnek şirketin rakamını
+# görmesi olurdu. Artık yeni grup eklemek yeterli.
 _MOCK_ONLY_KEYS = tuple({
-    "history",              # Biçim B yazar
-    "top_receivables",      # Biçim C yazar
-    "expense_breakdown",    # Biçim A, gider_ önekiyle yazar
-    "balance_sheet",        # Biçim A, bilanço grubuyla yazar
-    *BICIM_A_ALACAK,        # alacak bakiyesi / tahsilat günü
-    *BICIM_A_METIN,         # şirket adı, sektör, veri tarihi
+    *BICIM_B_YAZAR,
+    *BICIM_C_YAZAR,
+    GIDER_HEDEF,            # Biçim A, gider_ önekiyle yazar
+    *(anahtar for grup in BICIM_A_GRUPLARI
+      for anahtar in grup.tasinmaz_anahtarlar),
 })
 
 
@@ -231,30 +313,28 @@ def ornek_sablon() -> bytes:
     öğrenemezdi.
     """
     ornek = load_mock()
-    bilanco = ornek.get("balance_sheet", {})
     satirlar = ["alan,deger,aciklama"]
-    for alan, aciklama in BICIM_A_ALANLARI.items():
-        satirlar.append(f"{alan},{ornek.get(alan, 0):.0f},{aciklama}")
-    satirlar.append("# ── opsiyonel: alacak tarafı ──,,"
-                    "Vermezsen yaşlandırma paneli gizlenir")
-    for alan, aciklama in BICIM_A_ALACAK.items():
-        satirlar.append(f"{alan},{ornek.get(alan, 0):.0f},{aciklama}")
-    satirlar.append("# ── opsiyonel: bilanço (Altman Z-score) ──,,"
-                    "Eksikse skor üretilmez")
-    for alan, aciklama in BICIM_A_BILANCO.items():
-        satirlar.append(f"{alan},{bilanco.get(alan, 0):.0f},{aciklama}")
-    satirlar.append("# ── opsiyonel: gider dağılımı (13 haftalık takvim) ──,,"
-                    "Vermezsen ay-içi çukur görünmez")
-    for kalem, tutar in (ornek.get("expense_breakdown") or {}).items():
-        satirlar.append(f"{GIDER_ONEKI}{kalem},{tutar:.0f},"
-                        f"Gider kalemi — 13 haftalık ödeme takvimi için")
-    # Metin alanları BOŞ bırakılır. Sayılarda örnek değer büyüklük mertebesini
-    # öğretir ama şirket adını/tarihini doldurmak farklı bir şey olur: kullanıcı
-    # satırı silmezse örnek şirketin adı kendi raporuna yazılır.
-    satirlar.append("# ── opsiyonel: metin alanları ──,,"
-                    "Boş bırakılabilir")
-    for alan, aciklama in BICIM_A_METIN.items():
-        satirlar.append(f"{alan},,{aciklama}")
+
+    for grup in BICIM_A_GRUPLARI:
+        if grup.baslik:
+            satirlar.append(f"# ── {grup.baslik} ──,,{grup.baslik_notu}")
+        kaynak = ornek.get(grup.hedef, {}) if grup.hedef else ornek
+        for alan, aciklama in grup.alanlar.items():
+            # Metin alanları BOŞ bırakılır. Sayılarda örnek değer büyüklük
+            # mertebesini öğretir ama şirket adını/tarihini doldurmak farklı bir
+            # şey olur: kullanıcı satırı silmezse örnek şirketin adı kendi
+            # raporuna yazılır.
+            deger = "" if grup.metin else f"{kaynak.get(alan, 0):.0f}"
+            satirlar.append(f"{alan},{deger},{aciklama}")
+        # Gider dağılımı sabit alan listesi değil, kullanıcının kendi kalem
+        # adları; bu yüzden bilançodan sonra ayrı bir blok olarak yazılır.
+        if grup is _G_BILANCO:
+            satirlar.append("# ── opsiyonel: gider dağılımı (13 haftalık takvim) ──,,"
+                            "Vermezsen ay-içi çukur görünmez")
+            for kalem, tutar in (ornek.get(GIDER_HEDEF) or {}).items():
+                satirlar.append(f"{GIDER_ONEKI}{kalem},{tutar:.0f},"
+                                f"Gider kalemi — 13 haftalık ödeme takvimi için")
+
     return ("﻿" + "\n".join(satirlar) + "\n").encode("utf-8")
 
 
@@ -277,11 +357,13 @@ def _bos_taban(etiket: str) -> dict:
     return base
 
 
-def _uygula_bicim_a(df: pd.DataFrame, base: dict) -> None:
+def _uygula_bicim_a(df: pd.DataFrame, base: dict, uyarilar: list) -> None:
     """Anahtar-değer tablosunu sözlüğe işler (skaler + bilanço + gider)."""
     cols = set(df.columns)
     kcol = "alan" if "alan" in cols else "field"
     vcol = "deger" if "deger" in cols else "value"
+
+    metin_alanlari = {a for g in BICIM_A_GRUPLARI if g.metin for a in g.alanlar}
 
     kv, metin, atlanan = {}, {}, []
     for k, v in zip(df[kcol], df[vcol]):
@@ -292,7 +374,7 @@ def _uygula_bicim_a(df: pd.DataFrame, base: dict) -> None:
         # kopyalayan kullanıcı doğru şeyi yaptığı hâlde uyarı alırdı.
         if not ad or ad.startswith("#"):
             continue
-        if ad in BICIM_A_METIN:
+        if ad in metin_alanlari:
             deger = str(v).strip()
             if deger and deger.lower() != "nan":
                 metin[ad] = deger
@@ -304,30 +386,31 @@ def _uygula_bicim_a(df: pd.DataFrame, base: dict) -> None:
     if atlanan:
         # Sessiz atlamak tehlikeliydi: o alanda mock şirketin rakamı kalıyor
         # ve kullanıcı farkı göremiyordu. Artık söylüyoruz.
-        st.sidebar.warning(
+        uyarilar.append(Uyari(
+            "warning",
             "Sayıya çevrilemeyen satırlar atlandı, bu alanlarda örnek "
             "veri gösteriliyor: " + ", ".join(atlanan[:5])
-            + ("…" if len(atlanan) > 5 else "")
-        )
+            + ("…" if len(atlanan) > 5 else "")))
 
-    for key in BICIM_A_ALANLARI:
-        if key in kv:
-            base[key] = kv[key]
-    for key in BICIM_A_ALACAK:
-        if key in kv:
-            base[key] = kv[key]
-
-    # Bilanço iç içe bir sözlükte durur; düz anahtarlardan toplanır. Kısmen
-    # doldurulmuşsa da aynen aktarılır — eksik alanı burada tamamlamak yerine
-    # zscore.py'nin "skor üretme" kararına bırakmak doğrusu.
-    bilanco = {k: kv[k] for k in BICIM_A_BILANCO if k in kv}
-    if bilanco:
-        base["balance_sheet"] = bilanco
+    # Gruplar tabloya göre işlenir; yeni bir grup eklemek burada değişiklik
+    # gerektirmez. `hedef`i olan grup (bilanço) iç içe bir sözlüğe toplanır ve
+    # kısmen doldurulmuşsa da aynen aktarılır — eksik alanı burada tamamlamak
+    # yerine zscore.py'nin "skor üretme" kararına bırakmak doğrusu.
+    for grup in BICIM_A_GRUPLARI:
+        if grup.metin:
+            continue
+        secilen = {alan: kv[alan] for alan in grup.alanlar if alan in kv}
+        if not secilen:
+            continue
+        if grup.hedef:
+            base[grup.hedef] = secilen
+        else:
+            base.update(secilen)
 
     gider = {k[len(GIDER_ONEKI):]: v for k, v in kv.items()
              if k.startswith(GIDER_ONEKI) and v > 0}
     if gider:
-        base["expense_breakdown"] = gider
+        base[GIDER_HEDEF] = gider
 
     # Metin alanları: dosya adından gelen etiketi kullanıcının kendi yazdığı
     # değer ezer. `as_of` gerçek bir tarihse 13 haftalık takvim ondan başlar.
@@ -339,7 +422,7 @@ def _uygula_bicim_a(df: pd.DataFrame, base: dict) -> None:
         base["avg_monthly_collections"] = base["avg_monthly_revenue"]
 
 
-def _uygula_bicim_b(df: pd.DataFrame, base: dict) -> None:
+def _uygula_bicim_b(df: pd.DataFrame, base: dict, uyarilar: list) -> None:
     """Aylık geçmiş tablosunu sözlüğe işler."""
     cols = set(df.columns)
     base["avg_monthly_revenue"] = float(df["revenue"].mean())
@@ -351,7 +434,7 @@ def _uygula_bicim_b(df: pd.DataFrame, base: dict) -> None:
     base["history"] = normalize_history(df).to_dict("records")
 
 
-def _uygula_bicim_c(df: pd.DataFrame, base: dict) -> None:
+def _uygula_bicim_c(df: pd.DataFrame, base: dict, uyarilar: list) -> None:
     """
     Alacak yaşlandırma listesini sözlüğe işler.
 
@@ -393,9 +476,10 @@ def _uygula_bicim_c(df: pd.DataFrame, base: dict) -> None:
         })
 
     if atlanan:
-        st.sidebar.warning(
+        uyarilar.append(Uyari(
+            "warning",
             "Alacak listesinde tutarı okunamayan satırlar atlandı: "
-            + ", ".join(atlanan[:5]) + ("…" if len(atlanan) > 5 else ""))
+            + ", ".join(atlanan[:5]) + ("…" if len(atlanan) > 5 else "")))
     if not kalemler:
         return
 
@@ -404,18 +488,18 @@ def _uygula_bicim_c(df: pd.DataFrame, base: dict) -> None:
     base.setdefault("receivables_outstanding", sum(k["amount"] for k in kalemler))
 
 
-def _tani_ve_uygula(df: pd.DataFrame, base: dict) -> bool:
+def _tani_ve_uygula(df: pd.DataFrame, base: dict, uyarilar: list) -> bool:
     """Tablonun biçimini tanıyıp uygular; tanınmazsa False döner."""
     cols = set(df.columns)
     if {"alan", "deger"} <= cols or {"field", "value"} <= cols:
-        _uygula_bicim_a(df, base)
+        _uygula_bicim_a(df, base, uyarilar)
         return True
     if {"revenue", "fixed_expense"} <= cols:
-        _uygula_bicim_b(df, base)
+        _uygula_bicim_b(df, base, uyarilar)
         return True
     if _sutun_bul(cols, _ALACAK_SUTUNLARI["tutar"]) and \
             _sutun_bul(cols, _ALACAK_SUTUNLARI["gecikme"]):
-        _uygula_bicim_c(df, base)
+        _uygula_bicim_c(df, base, uyarilar)
         return True
     return False
 
@@ -426,54 +510,74 @@ def _oku_ve_normalize(file) -> pd.DataFrame:
     return df
 
 
-def parse_uploaded(file) -> dict | None:
+def parse_files(files) -> YuklemeSonucu:
     """
-    Tek bir kullanıcı CSV/Excel'ini esnekçe ayrıştırır.
-    Başarısız olursa None döner ve uygulama mock veriye devam eder.
-    """
-    return parse_uploaded_files([file])
-
-
-def parse_uploaded_files(files) -> dict | None:
-    """
-    Birden fazla dosyayı TEK bir şirket sözlüğünde birleştirir.
+    Birden fazla dosyayı TEK bir şirket sözlüğünde birleştirir — arayüzden
+    bağımsız çekirdek.
 
     Kaynak sistemlerde mizan, aylık rapor ve yaşlandırma dökümü ayrı dosyalardır;
     kullanıcıyı bunları elle birleştirmeye zorlamak yerine hepsi kabul edilir.
     Sıra önemsizdir: her dosya kendi alanlarını yazar, dokunmadığı alan
-    diğerinden gelir. Hiçbiri tanınmazsa None döner ve mock veriye devam edilir.
+    diğerinden gelir. Hiçbiri tanınmazsa `data=None` döner ve mock veriye devam
+    edilir — ama uyarılar YİNE DE döner, çünkü kullanıcının bilmesi gereken tam
+    da budur.
     """
     dosyalar = [f for f in (files or []) if f is not None]
     if not dosyalar:
-        return None
+        return YuklemeSonucu(None)
 
     adlar = ", ".join(safe_display_name(f.name) for f in dosyalar[:3])
     base = _bos_taban(f"{adlar} (yüklendi)")
+    uyarilar: list[Uyari] = []
 
     taninan = 0
     for file in dosyalar:
         try:
             df = _oku_ve_normalize(file)
         except Exception as e:  # noqa: BLE001
-            st.sidebar.error(f"{safe_display_name(file.name)} okunamadı: {e}")
+            uyarilar.append(Uyari(
+                "error", f"{safe_display_name(file.name)} okunamadı: {e}"))
             continue
 
         try:
-            if _tani_ve_uygula(df, base):
+            if _tani_ve_uygula(df, base, uyarilar):
                 taninan += 1
                 continue
         except Exception as e:  # noqa: BLE001
-            st.sidebar.error(f"{safe_display_name(file.name)} işlenemedi: {e}")
+            uyarilar.append(Uyari(
+                "error", f"{safe_display_name(file.name)} işlenemedi: {e}"))
             continue
 
         # Buraya düşmek "dosya okundu ama biçimi tanınmadı" demek. Eskiden
         # sessizce None dönülüyordu: kullanıcı yükleme yapıyor, hiçbir şey
         # değişmiyor ve hiçbir açıklama görmüyordu.
-        st.sidebar.error(
+        uyarilar.append(Uyari("error", (
             f"{safe_display_name(file.name)}: sütunlar tanınmadı. "
             "Biçim A: 'alan,deger'. Biçim B: month, revenue, fixed_expense… "
             "Biçim C: musteri, tutar, gecikme_gun. Bulunan sütunlar: "
-            f"{', '.join(sorted(df.columns))[:120]}"
-        )
+            f"{', '.join(sorted(df.columns))[:120]}")))
 
-    return base if taninan else None
+    return YuklemeSonucu(base if taninan else None, uyarilar)
+
+
+def goster(uyarilar) -> None:
+    """Ayrıştırma uyarılarını sidebar'a basar (arayüzün tek dokunduğu yer)."""
+    for u in uyarilar or ():
+        (st.sidebar.error if u.seviye == "error" else st.sidebar.warning)(u.mesaj)
+
+
+def parse_uploaded_files(files) -> dict | None:
+    """
+    `parse_files` + uyarıları sidebar'a bas. Arayüzün doğrudan çağırdığı sürüm.
+    """
+    sonuc = parse_files(files)
+    goster(sonuc.uyarilar)
+    return sonuc.data
+
+
+def parse_uploaded(file) -> dict | None:
+    """
+    Tek bir kullanıcı CSV/Excel'ini esnekçe ayrıştırır.
+    Başarısız olursa None döner ve uygulama mock veriye devam eder.
+    """
+    return parse_uploaded_files([file])

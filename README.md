@@ -432,9 +432,10 @@ cash-guard/
 │   ├── format.py                # Arayüzden bağımsız biçimlendirme (motor kullanır)
 │   ├── theme.py                 # "War-room" karanlık tema, KPI kartları, CSS
 │   └── performance_utils.py     # Numba/NumPy nakit yolu çekirdeği
-├── tests/                       # 226 test, 15 dosya
+├── tests/                       # 235 test, 16 dosya
 │   ├── test_finance_math.py     # Kredi matematiği + Monte Carlo değişmezleri
 │   ├── test_runway.py           # Statik/trend runway, Theil–Sen dayanıklılığı
+│   ├── test_engine_contract.py  # Motorların ortak "yeterli veri var mı" sözleşmesi
 │   ├── test_data_integrity.py   # Mock veri tutarlılığı + yükleme dayanıklılığı
 │   ├── test_report.py           # PDF üretimi, font ve para birimi kararı
 │   ├── test_ai_cfo.py           # Sağlayıcı seçimi, fallback, teşhis, sızıntı
@@ -552,24 +553,25 @@ python -m pytest tests/ -q          # pytest ile
 python tests/test_finance_math.py   # ya da tek tek, bağımlılıksız
 ```
 
-**226 test**, on beş dosyada:
+**235 test**, on altı dosyada:
 
 | Dosya | Neyi korur |
 |-------|-----------|
-| `test_data_integrity.py` (33) | Mock verinin ortalamalarının skalerlerle birebir tutması, kasa yürüyüşünün sapmasız olması, eksik sütunlu CSV'nin uygulamayı çökertmemesi, Türkçe/Excel biçimlerinin okunması, Türkçe etiketler |
-| `test_finance_math.py` (26) | Annüite formülü elle hesaplanmış değerle; itfa tablosunda anapara toplamı = kredi ve vade sonu bakiye = 0; Monte Carlo değişmezleri (olasılık aralığı, tohum tekrarlanabilirliği, yüzdelik bantların sıralaması, "stres artınca batma olasılığı düşemez"); **vektörize çekirdeğin naif referans döngüyle birebir eşitliği** |
+| `test_data_integrity.py` (36) | Mock verinin ortalamalarının skalerlerle birebir tutması, kasa yürüyüşünün sapmasız olması, eksik sütunlu CSV'nin uygulamayı çökertmemesi, Türkçe/Excel biçimlerinin okunması, Türkçe etiketler |
+| `test_finance_math.py` (26) | Annüite formülü elle hesaplanmış değerle; itfa tablosunda anapara toplamı = kredi ve vade sonu bakiye = 0; Monte Carlo değişmezleri (olasılık aralığı, tohum tekrarlanabilirliği, yüzdelik bantların sıralaması, "stres artınca batma olasılığı düşemez"); **paylaşılan şok matrisinin tek başına koşan sürümle birebir aynı olasılığı vermesi ve yanlış parametreyle yeniden kullanılmayı reddetmesi**; **vektörize çekirdeğin naif referans döngüyle birebir eşitliği** |
 | `test_app_wiring.py` (14) | Arayüz kablolaması: Streamlit `AppTest` ile uçtan uca kaydetme, geri yükleme ve paylaşılabilir link akışı |
 | `test_ai_cfo.py` (13) | Sağlayıcı sırası ve hataya karşı bir sonrakine geçiş, anahtarsız kural tabanlı motora düşüş, teşhis mesajı, anahtarın çıktıya sızmaması |
 | `test_report.py` (14) | PDF gerçekten üretiliyor mu, Türkçe karakter için font seçimi ve para birimi kararı |
 | `test_api.py` (18) | HTTP uçlarının sözleşmesi, girdi doğrulama ve iterasyon tavanı, **API'nin motorla aynı sayıyı vermesi**, arayüz yığını import edilemezken bile ayağa kalkması |
 | `test_store.py` (11) | Senaryo defteri sözleşmesi: kayıt kaybolmaz, bozuk JSON uygulamayı çökertmez |
-| `test_runway.py` (8) | Statik/trend runway ayrışması, Theil–Sen'in aykırı değere dayanıklılığı, yetersiz veride güvenli geri çekilme |
+| `test_runway.py` (9) | Statik/trend runway ayrışması, Theil–Sen'in aykırı değere dayanıklılığı, yetersiz veride güvenli geri çekilme |
 | `test_weekly.py` (17) | Aylık toplamların güne dağıtılırken korunması, ödeme günlerinin doğru haftaya düşmesi, olmayan ayın 31'inin son güne çekilmesi, gider dağılımı yokken "bu tablo bilgi taşımıyor" itirafı |
 | `test_zscore.py` (18) | Altman katsayılarının ve bölge eşiklerinin elle hesaplanmış değerlerle uyumu, model seçimi, eksik veride skor ÜRETMEME, borçsuz şirkette sonsuza kaçmama, "Altman güvenli der / nakit batıyor der" tezinin kilitlenmesi |
 | `test_receivables.py` (19) | Kova sınırlarının etiketleriyle uyumu, şüpheli alacak aritmetiği, DSO, bakiye ile yaşlandırmanın çelişkisinin yakalanması, türetilmiş sürgülerin ölçülen kaymayı vermesi, bozuk veride çökmeme |
 | `test_loan_sweep.py` (13) | Izgarada sıfırın hep bulunması (kredisiz hâl çıpadır), şablon tutarının her adımda ezilmesi, taramanın tekrarlanabilirliği ve **borç tuzağının iki koşulla birden işaretlenmesi** |
 | `test_sensitivity.py` (12) | Tornado sıralaması, sürgü sınırlarının arayüzle uyumu, ortak rastgele sayıların korunması, ekonomik yönün doğruluğu, sınırda kırpma dürüstlüğü |
 | `test_scenario.py` (7) | URL'de taşınan senaryonun tur gidiş-dönüşü, bozuk/eksik parametrede varsayılana düşme |
+| `test_engine_contract.py` (5) | Dört motorun (zscore, receivables, weekly, runway) "yeterli veri var mı" sorusunu AYNI dille cevaplaması; eksik alanların kullanıcının şablonda gerçekten doldurabileceği adlarla bildirilmesi |
 | `test_docs.py` (3) | README'nin kendi hakkında verdiği test sayılarının bayatlamaması |
 
 En kritik test `test_vectorized_kernel_matches_reference`: Monte Carlo çekirdeği

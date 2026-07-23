@@ -163,10 +163,20 @@ def test_from_company_derives_sales_and_ebit_from_the_monthly_scalars():
 
 
 def test_from_company_without_a_balance_sheet_reports_everything_missing():
-    """Kullanıcı kendi CSV'sini yüklediğinde bilanço gelmez; kart gizlenmeli."""
+    """
+    Kullanıcı kendi CSV'sini yüklediğinde bilanço gelmez; kart gizlenmeli.
+
+    Eksik alanlar KULLANICININ DİLİNDE bildirilir: `ebit_annual` şablonda yoktur
+    (aylık skalerlerden türetilir), o yüzden onun yerine türetildiği alanların
+    adı görünür. Ekranda kendi yazamayacağı bir alanı arayan kullanıcı, panelin
+    neden sustuğunu hiç öğrenemezdi.
+    """
     r = z.from_company({"sector": "Üretim", "avg_monthly_revenue": 1})
     assert not r.available
-    assert set(z.REQUIRED_FIELDS) <= set(r.missing_fields)
+    ham = set(z.REQUIRED_FIELDS) - set(z._DERIVED_FROM)
+    assert ham <= set(r.missing_fields)
+    assert "ebit_annual" not in r.missing_fields
+    assert "avg_monthly_revenue" in r.missing_fields
 
 
 # ── Demo şirketi: uygulamanın tezi ────────────────────────────────────────

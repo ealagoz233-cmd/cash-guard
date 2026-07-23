@@ -130,6 +130,25 @@ class AgingProfile:
     dso: float | None = None                 # bakiye ÷ aylık gelir × 30
     listed_amount: float = 0.0               # kalem kalem listelenen tutar
 
+    # ── Ortak "yeterli veri var mı" sözleşmesi (utils/sufficiency.py) ─────
+    @property
+    def available(self) -> bool:
+        """
+        Yaşlandırma paneli bir şey söylüyor mu?
+
+        Çağıranlar bunu `profile.total > 0` yazarak kendileri kontrol ediyordu;
+        unutan bir çağrı yerinde panel sıfıra bölünmüş oranlarla ya da bomboş
+        çizilirdi. Soru artık burada, diğer motorlarla aynı adla cevaplanıyor.
+        """
+        return self.total > 0
+
+    @property
+    def missing_fields(self) -> list[str]:
+        """Panelin açılması için kullanıcının doldurması gereken alanlar."""
+        if self.available:
+            return []
+        return ["receivables_outstanding", "top_receivables"]
+
     @property
     def unlisted_amount(self) -> float:
         """Bakiyenin kalem kalem listelenmeyen kısmı — tanımı gereği türetilir."""
