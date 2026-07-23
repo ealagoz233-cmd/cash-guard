@@ -88,9 +88,18 @@ def _simulate_paths_numpy(cash0, revenue, expense, debt_service):
 
     Aylık net akış matrisinin kümülatif toplamı yolu verir (vektörize, hızlı).
     Temerrüt tespiti için "kasa <= 0 olan ilk ay"ı argmax hilesiyle buluruz.
+
+    Ara adımlar YERİNDE yazılır. Deyimsel hâli (`net = ...` sonra
+    `cash0 + np.cumsum(net)`) dört ayrı (n, m) dizi ayırıyordu; 50.000
+    iterasyonda her biri ~4,8 MB ve bu fonksiyon tek bir tornado + tarama
+    turunda yirmi dörtten fazla kez çağrılıyor. Sonuç birebir aynı: çıkarma
+    sırası korunuyor, `cumsum` girdi elemanını yazmadan önce okuduğu için
+    `out=` kendi tamponuna güvenle yazabiliyor, toplama ise değişmeli.
     """
-    net = revenue - expense - debt_service          # (n, m)
-    paths = cash0 + np.cumsum(net, axis=1)          # ay-sonu kasa yolları
+    paths = revenue - expense                       # (n, m) — tek tahsis
+    paths -= debt_service
+    np.cumsum(paths, axis=1, out=paths)             # ay-sonu kasa yolları
+    paths += cash0
     below = paths <= 0.0                            # (n, m) bool maskesi
     ruined = below.any(axis=1)
     # argmax ilk True'nun indeksini verir; hiç yoksa 0 döner -> ruined ile maskele

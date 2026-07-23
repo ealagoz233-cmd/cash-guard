@@ -299,6 +299,45 @@ def test_shared_draws_refuse_a_different_shape(alan, deger):
         mc.run(replace(taban, **{alan: deger}), full=False, draws=draws)
 
 
+def test_in_place_math_never_touches_what_it_shares():
+    """
+    Şok kurulumu ve nakit döngüsü bellek trafiğini kısmak için YERİNDE yazıyor.
+    Bunun tek gerçek riski, paylaşılan bir diziyi bozmaktır: tarama aynı şoku 13
+    kez, tornado aynı çekimi 11 kez okuyor. Bozulsa hiçbir şey çökmez — ilk
+    koşudan sonraki her sonuç sessizce kayar.
+    """
+    p = _params()
+    draws = mc.build_draws(p)
+    z_gelir = draws.income_z.copy()
+    u_gecikme = draws.delay_u.copy()
+    z_gider = draws.expense_z.copy()
+
+    shocks = mc.build_shocks(p, draws=draws)
+    gelir = shocks.revenue.copy()
+    gider = shocks.expense.copy()
+
+    for _ in range(3):
+        mc.run(p, full=False, shocks=shocks)
+        mc.run(p, full=False, draws=draws)
+
+    assert np.array_equal(draws.income_z, z_gelir)
+    assert np.array_equal(draws.delay_u, u_gecikme)
+    assert np.array_equal(draws.expense_z, z_gider)
+    assert np.array_equal(shocks.revenue, gelir)
+    assert np.array_equal(shocks.expense, gider)
+
+
+def test_running_the_same_shared_shocks_twice_gives_the_same_answer():
+    """Yukarıdakinin davranış tarafı: tekrar okumak sonucu kaydırmamalı."""
+    p = _params()
+    shocks = mc.build_shocks(p)
+    _taze()
+    ilk = mc.run(p, full=False, shocks=shocks).ruin_probability
+    _taze()
+    ikinci = mc.run(p, full=False, shocks=shocks).ruin_probability
+    assert ilk == ikinci
+
+
 def test_probability_memo_returns_what_a_fresh_run_computes():
     """Önbellekten dönen sayı, yeniden hesaplananla birebir aynı olmalı."""
     p = _params(current_cash=3_000_000)

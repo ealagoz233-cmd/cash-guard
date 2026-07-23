@@ -184,27 +184,40 @@ def _build_shock_matrices(p: StressParams, draws: Draws):
     m = p.months
     ramp = np.arange(1, m + 1) / m               # (m,) 0<...<=1 doğrusal artış
 
+    # Aşağıdaki adımlar bilerek YERİNDE (in-place) yazıldı. Her `a = b * c`
+    # satırı (n_iter, months) boyutunda yeni bir dizi ayırıyor; 50.000
+    # iterasyonda bu dizilerin her biri ~4,8 MB. Deyimsel hâlinde on kadar
+    # geçici dizi kuruluyordu ve tornado bunu on bir kez tekrarlıyordu — hesabın
+    # kendisi değil, bellek trafiği baskındı.
+    #
+    # Çarpanların sırası değişse de sonuç BİREBİR aynı kalır (IEEE754'te çarpma
+    # değişmeli) ve `test_raw_draws_are_exactly_what_numpy_would_have_drawn`
+    # sonucu NumPy'ın kendi `rng.normal` çağrısıyla karşılaştırarak bunu
+    # kilitliyor.
+
     # ── Gelir/tahsilat: ortalama çarpan (1 − income_drop·ramp) ────────────
     # `rng.normal(ortalama, sapma)` ile BİREBİR aynı: NumPy de içeride tam
     # olarak `ortalama + sapma·z` hesaplıyor. Ayrı yazmanın sebebi z'yi
     # paylaşılabilir kılmak (bkz. Draws).
     income_mean = 1.0 - p.income_drop * ramp     # (m,) aya göre kayan ortalama
-    income_factor = income_mean + p.volatility * draws.income_z
-    income_factor = np.clip(income_factor, 0.0, None)   # negatif tahsilat olmaz
-    revenue = p.monthly_revenue * income_factor
+    revenue = draws.income_z * p.volatility
+    revenue += income_mean
+    np.clip(revenue, 0.0, None, out=revenue)     # negatif tahsilat olmaz
+    revenue *= p.monthly_revenue
 
     # ── Tahsilat gecikmesi: bazı aylarda tahsilatın bir kısmı sonraki aya kayar
-    delayed = draws.delay_u < p.delay_prob             # bu ay gecikme var mı
-    shift = revenue * p.delay_severity * delayed         # kayan tutar
-    revenue = revenue - shift                            # bu ay eksilir
+    shift = revenue * p.delay_severity                 # kayan tutar (aday)
+    shift *= draws.delay_u < p.delay_prob              # gecikme yoksa sıfırlanır
+    revenue -= shift                                     # bu ay eksilir
     # kayan tutarı bir sonraki aya taşı (son ay ufuk dışına düşer, kaybolur)
     revenue[:, 1:] += shift[:, :-1]
 
     # ── Gider: ortalama çarpan (1 + expense_inflation·ramp) ───────────────
     exp_mean = 1.0 + p.expense_inflation * ramp
-    exp_factor = exp_mean + (p.volatility * 0.6) * draws.expense_z
-    exp_factor = np.clip(exp_factor, 0.0, None)
-    expense = p.monthly_fixed_expense * exp_factor
+    expense = draws.expense_z * (p.volatility * 0.6)
+    expense += exp_mean
+    np.clip(expense, 0.0, None, out=expense)
+    expense *= p.monthly_fixed_expense
 
     return revenue, expense
 
