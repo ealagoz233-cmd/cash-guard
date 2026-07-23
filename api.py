@@ -131,7 +131,6 @@ class YaslandirmaIstegi(BaseModel):
                                 "fark 'listelenmemiş' sayılır")
     monthly_revenue: float | None = Field(
         None, ge=0, description="DSO için aylık FATURALANAN gelir (tahsilat değil)")
-    declared_collection_days: float | None = None
 
 
 class HaftalikIstek(BaseModel):
@@ -265,7 +264,6 @@ def yaslandirma(istek: YaslandirmaIstegi) -> dict:
         [k.model_dump() for k in istek.receivables],
         total_outstanding=istek.total_outstanding,
         monthly_revenue=istek.monthly_revenue,
-        declared_collection_days=istek.declared_collection_days,
     )
     turetilen = receivables.implied_stress(profil)
     return {

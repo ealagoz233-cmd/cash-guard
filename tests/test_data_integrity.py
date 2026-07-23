@@ -269,6 +269,40 @@ def test_full_template_round_trips_into_every_optional_group():
     assert d["receivables_outstanding"] > 0
 
 
+def test_uploader_can_supply_every_field_the_zscore_needs():
+    """
+    Yükleyicinin bilanço grubu ile Z-score'un istediği alanlar ayrışmamalı.
+
+    Ayrışırsa CSV yükleyen kullanıcı o alanı DOLDURAMAZ: şablonda yoktur,
+    ayrıştırıcı okumaz ve skor kalıcı olarak boş kalır — üstelik ekranda
+    "eksik alan" diye kendi yazamayacağı bir ad görür.
+    """
+    from modules.data_io import BICIM_A_BILANCO
+    from modules.zscore import REQUIRED_FIELDS
+
+    # `annual_sales` ve `ebit_annual` bilerek yok: ikisi de aylık skalerlerden
+    # türetiliyor (bkz. zscore.from_company), kullanıcıdan ayrıca istenmiyor.
+    turetilenler = {"annual_sales", "ebit_annual"}
+    istenen = set(REQUIRED_FIELDS) - turetilenler
+    assert istenen <= set(BICIM_A_BILANCO), (
+        f"yükleyici bu alanları kabul etmiyor: {istenen - set(BICIM_A_BILANCO)}")
+
+
+def test_mock_only_keys_cover_every_writable_group():
+    """
+    Bir biçimin yazabildiği her alan, mock'tan arındırılan listede olmalı.
+
+    Aksi hâlde kullanıcı o grubu yüklediğinde örnek şirketin değeri ekranda
+    kalır ve kendi verisi sanılır — yükleyicinin baştan beri engellediği hata.
+    """
+    from modules.data_io import (BICIM_A_ALACAK, BICIM_A_METIN,
+                                 _MOCK_ONLY_KEYS)
+
+    yazilabilir = ({"history", "top_receivables", "expense_breakdown",
+                    "balance_sheet"} | set(BICIM_A_ALACAK) | set(BICIM_A_METIN))
+    assert yazilabilir <= set(_MOCK_ONLY_KEYS)
+
+
 def test_comment_rows_in_the_template_are_skipped_not_warned_about():
     """
     Şablon ve README, grupları '# ── bilanço ──' satırlarıyla ayırıyor. Bunlar

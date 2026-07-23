@@ -136,6 +136,23 @@ def test_same_seed_is_reproducible():
     assert np.array_equal(a.percentiles["p50"], b.percentiles["p50"])
 
 
+def test_summary_only_run_gives_the_identical_probability():
+    """
+    `full=False` yalnızca boşa yapılan işi (fan chart bantları, örnek yollar,
+    dönem sonu istatistikleri) atlar; batma olasılığı BİREBİR aynı kalmalı.
+
+    Tornado ve kredi taraması onlarca koşuyu bu yolda yapıyor. Yol ayrışırsa
+    ekrandaki manşet ile o iki panelin tabanı sessizce farklılaşır.
+    """
+    p = _params()
+    tam, hizli = mc.run(p), mc.run(p, full=False)
+    assert hizli.ruin_probability == tam.ruin_probability
+    assert hizli.n_iter == tam.n_iter
+    # Atlanan alanlar gerçekten üretilmemeli, yoksa tasarruf da yok
+    assert hizli.sample_paths.size == 0
+    assert hizli.percentiles == {}
+
+
 def test_ruin_histogram_matches_ruined_count():
     """Histogram toplamı, batan senaryo sayısına birebir eşit olmalı."""
     p = _params()

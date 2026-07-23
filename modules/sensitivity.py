@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from modules import scenario
 from modules.monte_carlo import StressParams, run
 
 # Oynatma adımı: 5 puan (0.05). Sürgüler yüzde puanı cinsinden okunduğu için
@@ -40,22 +41,30 @@ DEFAULT_DELTA = 0.05
 class Driver:
     """Tornado'ya girecek tek bir stres sürgüsünün tanımı."""
     key: str        # StressParams alan adı
-    url_key: str    # scenario.ALANLAR'daki karşılığı (sürgünün sınır kaynağı)
+    url_key: str    # scenario.ALANLAR'daki karşılığı (sürgünün sınır KAYNAĞI)
     label: str      # arayüzde/rapor da görünecek Türkçe ad
-    lo: float       # sürgünün gerçek alt sınırı (ondalık)
-    hi: float       # sürgünün gerçek üst sınırı (ondalık)
+
+    # Sınırlar burada SAKLANMAZ, çalışma zamanında tek kaynaktan okunur. Eskiden
+    # kopyalanıyordu ve doğruluğu yalnızca bir teste bağlıydı; artık ayrışmaları
+    # imkânsız — sürgü genişletilirse tornado da aynı anda genişler.
+    @property
+    def lo(self) -> float:
+        return scenario.oran_sinirlari(self.url_key)[0]
+
+    @property
+    def hi(self) -> float:
+        return scenario.oran_sinirlari(self.url_key)[1]
 
 
-# Sınırlar app.py'deki sürgülerle birebir aynı olmalı; aksi halde tornado
-# kullanıcının asla ulaşamayacağı bir değeri "işte buradan kazanırsın" diye
-# gösterir. `url_key` sayesinde bu eşleşme elle değil, testle doğrulanıyor:
-# tests/test_sensitivity.py sınırları scenario.ALANLAR'dan okuyup karşılaştırır.
+# Tornado'nun oynattığı aralık, kullanıcının sürgüde gerçekten ayarlayabildiği
+# aralık olmalı; aksi hâlde ulaşılamayan bir değer "işte buradan kazanırsın"
+# diye gösterilir ve öneri uygulanamaz olur.
 DRIVERS: tuple[Driver, ...] = (
-    Driver("income_drop", "gelirdus", "Gelir düşüşü", 0.00, 0.40),
-    Driver("delay_prob", "gecikme", "Tahsilat gecikme olasılığı", 0.00, 0.80),
-    Driver("delay_severity", "kayan", "Geciken ayda kayan tahsilat", 0.00, 0.80),
-    Driver("expense_inflation", "giderart", "Gider artışı", 0.00, 0.40),
-    Driver("volatility", "oynaklik", "Piyasa oynaklığı", 0.05, 0.40),
+    Driver("income_drop", "gelirdus", "Gelir düşüşü"),
+    Driver("delay_prob", "gecikme", "Tahsilat gecikme olasılığı"),
+    Driver("delay_severity", "kayan", "Geciken ayda kayan tahsilat"),
+    Driver("expense_inflation", "giderart", "Gider artışı"),
+    Driver("volatility", "oynaklik", "Piyasa oynaklığı"),
 )
 
 # Bu eşiğin altındaki swing "pratikte etkisiz" sayılır. 10.000 iterasyonda
@@ -121,7 +130,9 @@ def tornado(base: StressParams, delta: float = DEFAULT_DELTA) -> TornadoResult:
     Maliyet: sürgü sayısı × 2 + 1 simülasyon (varsayılan ayarlarda ~11 koşu,
     10.000 iterasyonda toplam onlarca milisaniye).
     """
-    base_result = run(base)
+    # `full=False`: bu modül yalnızca batma olasılığını okuyor. Fan chart
+    # bantları ve örnek yollar 11 koşuda da üretilip atılıyordu.
+    base_result = run(base, full=False)
     impacts: list[DriverImpact] = []
 
     for drv in DRIVERS:
@@ -137,8 +148,8 @@ def tornado(base: StressParams, delta: float = DEFAULT_DELTA) -> TornadoResult:
                 base_result.ruin_probability, base_result.ruin_probability))
             continue
 
-        low = run(replace(base, **{drv.key: low_value}))
-        high = run(replace(base, **{drv.key: high_value}))
+        low = run(replace(base, **{drv.key: low_value}), full=False)
+        high = run(replace(base, **{drv.key: high_value}), full=False)
         impacts.append(DriverImpact(
             drv.key, drv.label, low_value, high_value,
             low.ruin_probability, high.ruin_probability))

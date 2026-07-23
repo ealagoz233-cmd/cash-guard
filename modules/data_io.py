@@ -32,12 +32,6 @@ import streamlit as st
 
 DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "mock_company_data.json"
 
-# Kullanıcı kendi verisini yüklediğinde mock şirkete ait olup TAŞINMAMASI gereken
-# anlatısal alanlar. Taşınırsa ekranda başka bir şirketin grafikleri kullanıcının
-# rakamlarıymış gibi görünür.
-_MOCK_ONLY_KEYS = ("history", "top_receivables", "expense_breakdown", "sector",
-                   "receivables_outstanding", "avg_collection_days")
-
 # Geçmiş trend grafiğinin çizilebilmesi için gereken asgari sütunlar.
 REQUIRED_HISTORY_COLS = {"month", "revenue"}
 
@@ -206,6 +200,25 @@ def _sutun_bul(cols: set[str], adaylar) -> str | None:
     return next((a for a in adaylar if a in cols), None)
 
 
+# Kullanıcı kendi verisini yüklediğinde mock şirkete ait olup TAŞINMAMASI
+# gereken alanlar: taşınırsa ekranda başka bir şirketin grafikleri kullanıcının
+# rakamlarıymış gibi görünür.
+#
+# Elle sayılmıyor, YAZILABİLİR ALANLARDAN türetiliyor. "Hangi mock alanı
+# sızabilir" sorusunun cevabı zaten "bir biçimin yazabildiği her alan"; ikisini
+# ayrı tutmak, yeni bir alan eklendiğinde onu bu listeye eklemeyi unutmak
+# demekti — ve unutmanın belirtisi, kullanıcının kendi raporunda örnek şirketin
+# rakamını görmesi olurdu.
+_MOCK_ONLY_KEYS = tuple({
+    "history",              # Biçim B yazar
+    "top_receivables",      # Biçim C yazar
+    "expense_breakdown",    # Biçim A, gider_ önekiyle yazar
+    "balance_sheet",        # Biçim A, bilanço grubuyla yazar
+    *BICIM_A_ALACAK,        # alacak bakiyesi / tahsilat günü
+    *BICIM_A_METIN,         # şirket adı, sektör, veri tarihi
+})
+
+
 def ornek_sablon() -> bytes:
     """
     İndirilebilir Biçim A şablonu (UTF-8 BOM'lu, Excel Türkçe karakterleri
@@ -259,7 +272,6 @@ def _bos_taban(etiket: str) -> dict:
     base = load_mock().copy()
     for k in _MOCK_ONLY_KEYS:
         base.pop(k, None)
-    base.pop("balance_sheet", None)     # bilanço da mock'a ait; sızmamalı
     base["company_name"] = "Yüklenen Şirket Verisi"
     base["as_of"] = etiket
     return base
@@ -352,21 +364,30 @@ def _uygula_bicim_c(df: pd.DataFrame, base: dict) -> None:
     tcol = _sutun_bul(cols, _ALACAK_SUTUNLARI["tutar"])
     gcol = _sutun_bul(cols, _ALACAK_SUTUNLARI["gecikme"])
 
+    # Sütunlar üzerinden zip'lenerek gezilir, `df.iterrows()` ile DEĞİL: iterrows
+    # her satır için bir Series nesnesi kurar ve 2000 satırlık bir yaşlandırma
+    # dökümünde ~89 ms tutuyordu (zip ile ~7 ms). Biçim A tarafı zaten bu deyimi
+    # kullanıyordu; ikisi aynı olmalı.
+    n = len(df)
+    tutarlar = df[tcol] if tcol else [None] * n
+    gunler = df[gcol] if gcol else [None] * n
+    musteriler = df[mcol] if mcol else [None] * n
+
     kalemler, atlanan = [], []
-    for _, satir in df.iterrows():
+    for musteri, ham_tutar, ham_gun in zip(musteriler, tutarlar, gunler):
         try:
-            tutar = _to_float(satir[tcol])
-        except (TypeError, ValueError, KeyError):
-            atlanan.append(str(satir.get(mcol, "?"))[:30])
+            tutar = _to_float(ham_tutar)
+        except (TypeError, ValueError):
+            atlanan.append(str(musteri)[:30] if musteri is not None else "?")
             continue
         if tutar <= 0:
             continue
         try:
-            gun = _to_float(satir[gcol]) if gcol else 0.0
+            gun = _to_float(ham_gun) if gcol else 0.0
         except (TypeError, ValueError):
             gun = 0.0      # gün okunamadıysa "vadesinde" say; uydurma yaş atama
         kalemler.append({
-            "customer": safe_display_name(satir[mcol]) if mcol else "—",
+            "customer": safe_display_name(musteri) if mcol else "—",
             "amount": tutar,
             "overdue_days": gun,
         })

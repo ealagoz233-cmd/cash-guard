@@ -37,6 +37,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from utils.format import as_float
+
 # X4 (özkaynak ÷ toplam yükümlülük) borcu olmayan şirkette tanımsızdır. Sonsuz
 # yerine sonlu ve yüksek bir tavan konuyor: borçsuzluk sağlıklıdır ama skoru
 # sınırsız şişirip diğer üç bileşeni anlamsızlaştırmamalı.
@@ -150,16 +152,29 @@ class ZScoreResult:
         return None if self.score is None else self.safe_above - self.score
 
 
-def _as_float(value):
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return None
-    return None if out != out else out       # NaN
+def _empty(model: Model, missing: list[str] | None = None) -> ZScoreResult:
+    """
+    Skoru olmayan ama model kimliğini TAŞIYAN sonuç.
+
+    Arayüz eksik veride bile "hangi model olacaktı, eşikleri neydi" yazıyor;
+    o yüzden bu beş alan her boş sonuçta doldurulmak zorunda ve iki ayrı yerde
+    elle kurulmaları gerekiyordu.
+    """
+    return ZScoreResult(model_key=model.key, model_name=model.name,
+                        model_fits=model.fits, safe_above=model.safe_above,
+                        distress_below=model.distress_below,
+                        missing_fields=list(missing or []))
 
 
 def _missing(bs: dict) -> list[str]:
-    return [f for f in REQUIRED_FIELDS if _as_float(bs.get(f)) is None]
+    """
+    Eksik/çevrilemez alanları listeler.
+
+    `default=None` ZORUNLU: ortak `as_float` varsayılan olarak 0.0 döner ve bu,
+    olmayan bir bilanço kalemini "sıfır" sayardı — yani eksik veriyle skor
+    üretmemek için var olan bütün korumayı sessizce devre dışı bırakırdı.
+    """
+    return [f for f in REQUIRED_FIELDS if as_float(bs.get(f), None) is None]
 
 
 def pick_model(sector: str | None) -> Model:
@@ -195,40 +210,38 @@ def compute(balance_sheet: dict, model: Model = Z_DOUBLE_PRIME) -> ZScoreResult:
     olmamasından daha tehlikelidir — kullanıcı sayıya bakar, arkasındaki boşluğu
     görmez.
     """
-    bos = ZScoreResult(model_key=model.key, model_name=model.name,
-                       model_fits=model.fits, safe_above=model.safe_above,
-                       distress_below=model.distress_below)
+    bos = _empty(model)
 
     bs = balance_sheet if isinstance(balance_sheet, dict) else {}
     eksik = _missing(bs)
     # X5 kullanan varyant yıllık satışı da ister.
     ister_satis = any(c.key == "x5" for c in model.components)
-    if ister_satis and _as_float(bs.get("annual_sales")) is None:
+    if ister_satis and as_float(bs.get("annual_sales"), None) is None:
         eksik = eksik + ["annual_sales"]
     if eksik:
         bos.missing_fields = eksik
         return bos
 
-    toplam_varlik = _as_float(bs["total_assets"])
+    toplam_varlik = as_float(bs["total_assets"])
     if not toplam_varlik or toplam_varlik <= 0:
         # Toplam varlık sıfır/negatifse bütün oranlar tanımsız.
         bos.missing_fields = ["total_assets"]
         return bos
 
-    isletme_sermayesi = (_as_float(bs["current_assets"])
-                         - _as_float(bs["current_liabilities"]))
-    toplam_yukumluluk = _as_float(bs["total_liabilities"])
+    isletme_sermayesi = (as_float(bs["current_assets"])
+                         - as_float(bs["current_liabilities"]))
+    toplam_yukumluluk = as_float(bs["total_liabilities"])
     ozkaynak = toplam_varlik - toplam_yukumluluk
 
     oranlar = {
         "x1": isletme_sermayesi / toplam_varlik,
-        "x2": _as_float(bs["retained_earnings"]) / toplam_varlik,
-        "x3": _as_float(bs["ebit_annual"]) / toplam_varlik,
+        "x2": as_float(bs["retained_earnings"]) / toplam_varlik,
+        "x3": as_float(bs["ebit_annual"]) / toplam_varlik,
         "x4": (min(ozkaynak / toplam_yukumluluk, MAX_EQUITY_TO_LIABILITIES)
                if toplam_yukumluluk > 0 else MAX_EQUITY_TO_LIABILITIES),
     }
     if ister_satis:
-        oranlar["x5"] = _as_float(bs["annual_sales"]) / toplam_varlik
+        oranlar["x5"] = as_float(bs["annual_sales"]) / toplam_varlik
 
     bilesenler = [
         ComponentValue(c.key, c.label, oranlar[c.key], c.weight, c.explain)
@@ -253,15 +266,11 @@ def from_company(data: dict) -> ZScoreResult:
     """
     bs = dict(data.get("balance_sheet") or {})
     if not bs:
-        model = pick_model(data.get("sector"))
-        return ZScoreResult(model_key=model.key, model_name=model.name,
-                            model_fits=model.fits, safe_above=model.safe_above,
-                            distress_below=model.distress_below,
-                            missing_fields=list(REQUIRED_FIELDS))
+        return _empty(pick_model(data.get("sector")), list(REQUIRED_FIELDS))
 
-    aylik_gelir = _as_float(data.get("avg_monthly_revenue")) or 0.0
-    aylik_gider = _as_float(data.get("avg_monthly_fixed_expense")) or 0.0
-    amortisman = _as_float(bs.get("annual_depreciation")) or 0.0
+    aylik_gelir = as_float(data.get("avg_monthly_revenue")) or 0.0
+    aylik_gider = as_float(data.get("avg_monthly_fixed_expense")) or 0.0
+    amortisman = as_float(bs.get("annual_depreciation")) or 0.0
 
     bs.setdefault("annual_sales", aylik_gelir * 12)
     bs.setdefault("ebit_annual", (aylik_gelir - aylik_gider) * 12 - amortisman)

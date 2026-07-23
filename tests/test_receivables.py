@@ -191,7 +191,7 @@ def test_mock_company_book_is_fully_itemised():
     """
     d = load_mock()
     p = age(d["top_receivables"], d["receivables_outstanding"],
-            d["avg_monthly_revenue"], d.get("avg_collection_days"))
+            d["avg_monthly_revenue"])
     assert p.unlisted_amount == 0
     assert p.total == d["receivables_outstanding"]
     # Defterin tamamı gecikmiş — "alacaklar şişmiş" hikâyesinin sayısal karşılığı
@@ -210,7 +210,7 @@ def test_mock_company_balance_and_aging_do_not_contradict_each_other():
     """
     d = load_mock()
     p = age(d["top_receivables"], d["receivables_outstanding"],
-            d["avg_monthly_revenue"], d.get("avg_collection_days"))
+            d["avg_monthly_revenue"])
     assert not p.dso_conflict, (
         f"demo verisi çelişkili: DSO {p.dso:.1f} gün ama yaşlandırma "
         f"{p.weighted_overdue_days:.1f} gün gecikme diyor")

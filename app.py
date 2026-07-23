@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import asdict
 
 import numpy as np
 import pandas as pd
@@ -72,13 +73,13 @@ def run_tornado(**kwargs) -> sensitivity.TornadoResult:
 
 
 @st.cache_data(show_spinner="Kredi tutarları taranıyor…")
-def run_loan_sweep(stress: dict, loan: dict) -> loan_sweep.SweepResult:
+def run_loan_sweep(loan: dict, **stress) -> loan_sweep.SweepResult:
     """
     Kredi tutarı taramasını önbelleğe alır.
 
-    Parametreler dataclass yerine sözlük olarak alınıyor: `st.cache_data`
-    anahtarı argümanlardan üretir ve sözlük hem hash'lenebilir hem de içeriği
-    değişince anahtarı gerçekten değiştirir.
+    Stres parametreleri diğer iki sarmalayıcıyla AYNI biçimde (kwargs olarak)
+    alınır; böylece üç çağrı yerine de tek bir `**STRES` akıtılabiliyor ve her
+    çağrı yerini kendi sözleşmesine göre okumak gerekmiyor.
     """
     return loan_sweep.sweep(mc.StressParams(**stress), ls.LoanScenario(**loan))
 
@@ -262,32 +263,38 @@ loan_scn = ls.LoanScenario(
 )
 loan_res = ls.simulate(loan_scn)
 
-# Modül 2 — Monte Carlo. MEVCUT iş modelini (yeni kredi OLMADAN) stres testine
-# sokar: "bugünkü halimle 12 ayda batma olasılığım ne?" Kredinin etkisi Modül
-# 1'de deterministik olarak, CFO yorumunda ise sözlü olarak ele alınır.
-mc_res = run_monte_carlo(
+# Stres parametreleri TEK yerde kurulur. Dört ayrı tüketici (manşet Monte Carlo,
+# kredili karşılaştırma, tornado, tutar taraması) AYNI senaryoyu ölçmek zorunda.
+# Blok kopyalanınca biri güncellenip diğerleri eski senaryoda kalıyordu ve ekran
+# aynı şirket için farklı sayılar gösteriyordu — bu deponun her yerde savaştığı
+# hata sınıfının ta kendisi (bkz. test_api_and_engine_agree).
+STRES = dict(
     current_cash=current_cash,
-    monthly_revenue=avg_collections, monthly_fixed_expense=avg_exp,
+    monthly_revenue=avg_collections,
+    monthly_fixed_expense=avg_exp,
     monthly_debt_service=debt_service,
     income_drop=income_drop, volatility=volatility,
     delay_prob=delay_prob, delay_severity=delay_sev,
-    expense_inflation=exp_infl, months=12, n_iter=int(n_iter), seed=42,
+    expense_inflation=exp_infl,
+    months=12, n_iter=int(n_iter), seed=42,
 )
+
+# Modül 2 — Monte Carlo. MEVCUT iş modelini (yeni kredi OLMADAN) stres testine
+# sokar: "bugünkü halimle 12 ayda batma olasılığım ne?" Kredinin etkisi Modül
+# 1'de deterministik olarak, CFO yorumunda ise sözlü olarak ele alınır.
+mc_res = run_monte_carlo(**STRES)
 ruin_pct = mc_res.ruin_probability * 100
 
 # Karşılaştırma senaryosu: AYNI stres, ama krediyi çekmiş varsayarak
 # (başta +kredi nakdi, vade boyunca +taksit). Kredi 12 ayı rahatlatıp
-# 24 ayda batıran "borç tuzağını" sayısal olarak görünür kılar.
+# 24 ayda batıran "borç tuzağını" sayısal olarak görünür kılar. Yalnızca
+# değişen iki alan ezilir; gerisi tanımı gereği tabanla aynı kalır.
 mc_loan = None
 if loan_amount > 0:
-    mc_loan = run_monte_carlo(
-        current_cash=current_cash + loan_amount,
-        monthly_revenue=avg_collections, monthly_fixed_expense=avg_exp,
-        monthly_debt_service=debt_service + loan_res["installment"],
-        income_drop=income_drop, volatility=volatility,
-        delay_prob=delay_prob, delay_severity=delay_sev,
-        expense_inflation=exp_infl, months=12, n_iter=int(n_iter), seed=42,
-    )
+    mc_loan = run_monte_carlo(**(STRES | {
+        "current_cash": current_cash + loan_amount,
+        "monthly_debt_service": debt_service + loan_res["installment"],
+    }))
 
 # Nakit ömrü (runway): aylık net dış akış negatifse kasa / yakım.
 # DİKKAT: Bu STATİK bir hesap — bugünkü yakım hızının sonsuza dek sabit kalacağını
@@ -577,7 +584,6 @@ aging = receivables.age(
     recv,
     total_outstanding=data.get("receivables_outstanding"),
     monthly_revenue=avg_rev,                       # DSO faturalanan gelire göre
-    declared_collection_days=data.get("avg_collection_days"),
 )
 
 if aging.total > 0:
@@ -746,19 +752,12 @@ else:
 # Yukarısı tek bir tutarı sınıyor. Asıl karar iki katmanlı ve ikinci katman
 # sürgüyü elle 12 kez oynatarak aranıyordu; aradaki eğri hiç görünmüyordu.
 st.write("")
+# Kredi şablonu Modül 1'in senaryosundan TÜRETİLİR, yeniden yazılmaz: vade,
+# faiz ve ufuk iki yerde tutulsaydı aynı ekranda tek tutarlık kart ile tarama
+# eğrisi farklı varsayımlara oturabilirdi. `loan_amount` zaten her adımda
+# eziliyor (bkz. loan_sweep.sweep), sıfırlanması sadece niyeti belli ediyor.
 sweep_res = run_loan_sweep(
-    stress=dict(
-        current_cash=current_cash, monthly_revenue=avg_collections,
-        monthly_fixed_expense=avg_exp, monthly_debt_service=debt_service,
-        income_drop=income_drop, volatility=volatility, delay_prob=delay_prob,
-        delay_severity=delay_sev, expense_inflation=exp_infl,
-        months=12, n_iter=int(n_iter), seed=42),
-    loan=dict(
-        current_cash=current_cash, monthly_revenue=avg_collections,
-        monthly_fixed_expense=avg_exp, existing_debt_service=debt_service,
-        loan_amount=0.0, loan_term_months=loan_term,
-        monthly_interest_rate=interest, horizon_months=24),
-)
+    loan=asdict(loan_scn) | {"loan_amount": 0.0}, **STRES)
 
 x_tutar = [p.amount for p in sweep_res.points]
 figs = go.Figure()
@@ -839,23 +838,30 @@ theme.section("13 Haftalık Likidite Ufku — Ayın Hangi Günü Dara Düşüyor
               chip="HAFTALIK")
 
 hafta_basi = weekly.parse_start(data.get("as_of"))
-wk = weekly.build(
-    current_cash=current_cash,
-    monthly_collections=avg_collections,
-    expense_breakdown=data.get("expense_breakdown"),
-    monthly_fixed_expense=avg_exp,
-    monthly_debt_service=debt_service,
-    start=hafta_basi,
-)
+
+
+def _haftalik(ek_kasa: float = 0.0, ek_taksit: float = 0.0):
+    """
+    Haftalık planı kurar; yalnızca kredinin değiştirdiği iki alanı parametre alır.
+
+    İki eğri AYNI eksende çiziliyor ve ancak diğer dört girdi birebir aynıysa
+    karşılaştırılabilir. Argümanlar iki yere kopyalandığında bunu hiçbir şey
+    zorlamıyordu — burada ayrışmak imkânsız.
+    """
+    return weekly.build(
+        current_cash=current_cash + ek_kasa,
+        monthly_collections=avg_collections,
+        expense_breakdown=data.get("expense_breakdown"),
+        monthly_fixed_expense=avg_exp,
+        monthly_debt_service=debt_service + ek_taksit,
+        start=hafta_basi,
+    )
+
+
+wk = _haftalik()
 # Kredili karşılığı: baştan +kredi nakdi, her ay +taksit yükü.
-wk_loan = weekly.build(
-    current_cash=current_cash + loan_amount,
-    monthly_collections=avg_collections,
-    expense_breakdown=data.get("expense_breakdown"),
-    monthly_fixed_expense=avg_exp,
-    monthly_debt_service=debt_service + loan_res["installment"],
-    start=hafta_basi,
-) if loan_amount > 0 else None
+wk_loan = (_haftalik(ek_kasa=loan_amount, ek_taksit=loan_res["installment"])
+           if loan_amount > 0 else None)
 
 st.caption(
     f"**{len(wk.weeks)} haftalık nakit takvimi** ({wk.weeks[0].start:%d.%m.%Y} – "
@@ -1103,14 +1109,7 @@ s3.metric("Beklenen İflas Ayı",
 # manşet sayıdan daha eylemli hâle getirir.
 theme.section("Neyi Düzeltirsen Ne Kazanırsın — Duyarlılık Analizi", chip="TORNADO")
 
-tor = run_tornado(
-    current_cash=current_cash,
-    monthly_revenue=avg_collections, monthly_fixed_expense=avg_exp,
-    monthly_debt_service=debt_service,
-    income_drop=income_drop, volatility=volatility,
-    delay_prob=delay_prob, delay_severity=delay_sev,
-    expense_inflation=exp_infl, months=12, n_iter=int(n_iter), seed=42,
-)
+tor = run_tornado(**STRES)
 delta_pp = round(tor.delta * 100)
 st.caption(
     f"Her stres sürgüsü tek tek **±{delta_pp} puan** oynatılıp diğerleri sabit "
@@ -1121,14 +1120,21 @@ st.caption(
 
 base_pct = tor.base_probability * 100
 # Plotly yatay barları alttan yukarı dizer; en etkili sürgü ÜSTTE dursun diye ters.
-imp = list(reversed(tor.impacts))
+etkiler = list(reversed(tor.impacts))
 
 
-def _tornado_side(values, label):
-    """Tabanın bir yanındaki barları (aşağı uç ya da yukarı uç) çizer."""
-    deltas = [v * 100 - base_pct for v in values]
+def _tornado_side(values, label, etkiler, taban_pct):
+    """
+    Tabanın bir yanındaki barları (aşağı uç ya da yukarı uç) çizer.
+
+    Etkiler ve taban parametre olarak alınır, modül kapsamından okunmaz: bu
+    yardımcı eskiden üç satır yukarıdaki iki isme sessizce bağlıydı ve o
+    isimlerden biri (`imp`) sayfanın başka bir yerinde farklı bir nesne için de
+    kullanılıyordu. Bloklardan biri yer değiştirse grafik sessizce yanlış çizerdi.
+    """
+    deltas = [v * 100 - taban_pct for v in values]
     return go.Bar(
-        y=[i.label for i in imp], x=deltas, base=base_pct, orientation="h",
+        y=[i.label for i in etkiler], x=deltas, base=taban_pct, orientation="h",
         name=label, showlegend=False,
         marker=dict(color=[COLORS["alarm"] if d > 0 else COLORS["guardian"]
                            for d in deltas], line=dict(width=0)),
@@ -1139,8 +1145,10 @@ def _tornado_side(values, label):
 
 
 figt = go.Figure()
-figt.add_trace(_tornado_side([i.low_probability for i in imp], "aşağı uç"))
-figt.add_trace(_tornado_side([i.high_probability for i in imp], "yukarı uç"))
+figt.add_trace(_tornado_side([i.low_probability for i in etkiler],
+                             "aşağı uç", etkiler, base_pct))
+figt.add_trace(_tornado_side([i.high_probability for i in etkiler],
+                             "yukarı uç", etkiler, base_pct))
 figt.add_vline(x=base_pct, line=dict(color=COLORS["text"], width=1.5, dash="dot"),
                annotation_text=f"bugün: %{base_pct:.1f}",
                annotation_font_color=COLORS["muted"])

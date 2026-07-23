@@ -28,10 +28,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 
 from modules import loan_simulator as ls
+from modules import scenario
 from modules.monte_carlo import StressParams, run
 
-# Arayüzdeki kredi sürgüsünün üst sınırı (modules/scenario.py ile aynı olmalı).
-DEFAULT_MAX_AMOUNT = 30_000_000
+# Arayüzdeki kredi sürgüsünün üst sınırı — tek kaynaktan okunur, kopyalanmaz.
+DEFAULT_MAX_AMOUNT = scenario.sinirlar("kredi")[1]
 DEFAULT_STEPS = 13
 
 # Bu eşiğin altındaki iyileşme "gürültü" sayılır. 10.000 iterasyonda Monte
@@ -142,11 +143,13 @@ def sweep(
         det = ls.simulate(replace(loan, loan_amount=float(tutar)))
         taksit = det["installment"]
 
+        # `full=False`: tarama yalnızca batma olasılığını okuyor; fan chart
+        # bantları ve örnek yollar 13 koşuda da üretilip atılıyordu.
         mc = run(replace(
             stress,
             current_cash=stress.current_cash + tutar,
             monthly_debt_service=stress.monthly_debt_service + taksit,
-        ))
+        ), full=False)
 
         noktalar.append(SweepPoint(
             amount=float(tutar),

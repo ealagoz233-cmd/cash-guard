@@ -49,6 +49,36 @@ def tr_num(value: float) -> str:
         return str(value)
 
 
+def as_float(value, default: float | None = 0.0) -> float | None:
+    """
+    Güvenilmez bir değeri sayıya çevirir; çevrilemezse `default` döner.
+
+    Motor modüllerinin (receivables, weekly, zscore) hepsi kullanıcı dosyasından
+    gelen sayılarla çalışıyor ve her biri kendi kopyasını taşıyordu. Kopyalar
+    aynı sözleşmeyi kodladığı için tehlikeliydi: birine `inf` reddi eklemek
+    diğer ikisini sessizce yanlış bırakırdı ve hiçbir test onları birbirine
+    bağlamıyordu.
+
+    NaN ve sonsuz reddedilir — ikisi de hesabın içine girdiğinde hata vermez,
+    sadece bütün türev sayıları sessizce bozar (ortalamalar NaN'a, oranlar
+    sonsuza kaçar).
+
+    `modules/data_io.py::_to_float` ile karıştırılmamalı: o, Türkçe binlik
+    ayracını çözen ve BAŞARISIZLIKTA HATA FIRLATAN bir ayrıştırıcıdır (yükleyici
+    hangi satırın atlandığını kullanıcıya söyleyebilsin diye). Buradaki ise
+    sessizce varsayılana düşen bir koruma.
+    """
+    if isinstance(value, bool):          # True/False sayı sayılmaz
+        return default
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return default
+    if out != out or out in (float("inf"), float("-inf")):
+        return default
+    return out
+
+
 def money(value: float, symbol: str = "₺") -> str:
     """4200000 -> '₺4.200.000' (Türk stili binlik ayracı)."""
     try:

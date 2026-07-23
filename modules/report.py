@@ -230,58 +230,67 @@ def build_report(ctx: dict) -> bytes:
     ruin = ctx["ruin_pct"]
     ruin_col = ALARM if ruin >= 60 else AMBER if ruin >= 30 else GUARDIAN
     em = ctx.get("expected_ruin_month")
-    kpi_rows = [
-        ("Mevcut Kasa", _money(ctx["current_cash"], sym)),
-        ("12 Ay İçinde Batma Olasılığı", f"%{ruin:.1f}"),
-        ("Beklenen İflas Ayı (stresli)", f"{em:.0f}. ay" if em else "Ufukta yok"),
-        ("Aylık Net Nakit Akışı (baz)", _money(ctx["monthly_net"], sym)),
-    ]
-    kpi_colors = {1: ruin_col,
-                  3: ALARM if ctx["monthly_net"] < 0 else GUARDIAN}
+    kpi_rows: list[tuple[str, str]] = []
+    kpi_colors: dict[int, str] = {}
+
+    def _kpi(label: str, value: str, color: str | None = None) -> None:
+        """
+        Tek bir özet satırı ekler.
+
+        Satır ve rengi eskiden iki ayrı ifadeyle, elle hesaplanan
+        `len(kpi_rows) - 1` indisiyle bağlanıyordu. Satırları yeniden sıralamak
+        ya da birini koşullu atlamak tam olarak orada bozulur — indis kayar ve
+        renk komşu satıra geçer.
+        """
+        kpi_rows.append((label, value))
+        if color:
+            kpi_colors[len(kpi_rows) - 1] = color
+
+    _kpi("Mevcut Kasa", _money(ctx["current_cash"], sym))
+    _kpi("12 Ay İçinde Batma Olasılığı", f"%{ruin:.1f}", ruin_col)
+    _kpi("Beklenen İflas Ayı (stresli)", f"{em:.0f}. ay" if em else "Ufukta yok")
+    _kpi("Aylık Net Nakit Akışı (baz)", _money(ctx["monthly_net"], sym),
+         ALARM if ctx["monthly_net"] < 0 else GUARDIAN)
 
     # Nakit ömrü: statik hesap ile trend hesabı yan yana. İkisi arasındaki fark
     # yönetim kurulunun görmesi gereken asıl bilgi.
     static_rw, trend_rw = ctx.get("runway_months"), ctx.get("trend_runway_months")
     if static_rw and trend_rw:
-        kpi_rows.append(("Nakit Ömrü (sabit gidiş / bozulma trendi)",
-                         f"~{static_rw:.0f} ay  /  ~{trend_rw} ay"))
-        kpi_colors[len(kpi_rows) - 1] = ALARM if trend_rw <= 12 else AMBER
+        _kpi("Nakit Ömrü (sabit gidiş / bozulma trendi)",
+             f"~{static_rw:.0f} ay  /  ~{trend_rw} ay",
+             ALARM if trend_rw <= 12 else AMBER)
     elif static_rw:
-        kpi_rows.append(("Nakit Ömrü (sabit gidişle)", f"~{static_rw:.0f} ay"))
+        _kpi("Nakit Ömrü (sabit gidişle)", f"~{static_rw:.0f} ay")
 
     # Yapısal hüküm: bilanço ne diyor? Nakit hükmüyle çeliştiğinde yönetim
     # kurulunun ilk soracağı soru bu olur, cevabı raporda hazır dursun.
     z_skor, z_bolge = ctx.get("z_score"), ctx.get("z_zone")
     if z_skor is not None and z_bolge:
-        kpi_rows.append((f"Altman Z-Skoru ({_esc(z_bolge)} bölge)", f"{z_skor:.2f}"))
-        kpi_colors[len(kpi_rows) - 1] = (
-            GUARDIAN if z_bolge == "Güvenli" else AMBER if z_bolge == "Gri" else ALARM)
+        _kpi(f"Altman Z-Skoru ({_esc(z_bolge)} bölge)", f"{z_skor:.2f}",
+             GUARDIAN if z_bolge == "Güvenli" else AMBER if z_bolge == "Gri" else ALARM)
 
     # Alacak kalitesi: geciken para ile hiç gelmeyecek parayı ayır.
     supheli = ctx.get("expected_uncollectible")
     if supheli:
         dso = ctx.get("dso_days")
-        etiket = ("Şüpheli Alacak (tahsil edilemeyebilir)"
-                  + (f" · DSO {dso:.0f} gün" if dso else ""))
-        kpi_rows.append((etiket, _money(supheli, sym)))
-        kpi_colors[len(kpi_rows) - 1] = ALARM
+        _kpi("Şüpheli Alacak (tahsil edilemeyebilir)"
+             + (f" · DSO {dso:.0f} gün" if dso else ""),
+             _money(supheli, sym), ALARM)
 
     # Ay-içi dip: aylık tabloların hiçbirinde görünmeyen an. Yönetim kurulu
     # kredi limitini ay sonuna göre değil buna göre ayarlamalı.
     dip_kasa = ctx.get("weekly_min_cash")
     if dip_kasa is not None:
         dip_hafta = ctx.get("weekly_min_week")
-        kpi_rows.append((f"13 Hafta İçindeki En Dip Kasa"
-                         + (f" ({_esc(dip_hafta)})" if dip_hafta else ""),
-                         _money(dip_kasa, sym)))
-        kpi_colors[len(kpi_rows) - 1] = ALARM if dip_kasa < 0 else AMBER
+        _kpi("13 Hafta İçindeki En Dip Kasa"
+             + (f" ({_esc(dip_hafta)})" if dip_hafta else ""),
+             _money(dip_kasa, sym), ALARM if dip_kasa < 0 else AMBER)
 
     # En büyük kaldıraç: "neyi düzeltirsen ne kazanırsın" tek satırda.
     kaldirac = ctx.get("top_driver")
     if kaldirac:
-        kpi_rows.append(("Batma Riskini En Çok Oynatan Değişken",
-                         f"{_esc(kaldirac)}  ({ctx.get('top_driver_swing', 0):.1f} puan)"))
-        kpi_colors[len(kpi_rows) - 1] = AMBER
+        _kpi("Batma Riskini En Çok Oynatan Değişken",
+             f"{_esc(kaldirac)}  ({ctx.get('top_driver_swing', 0):.1f} puan)", AMBER)
 
     story.append(_kv_table(kpi_rows, S, kpi_colors))
 

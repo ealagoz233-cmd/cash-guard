@@ -36,6 +36,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from modules import scenario
+from utils.format import as_float as _as_float
+
 # Bir ayı kaç gün sayıyoruz (DSO için). Takvim ayı 30,44 ama sektörde 30
 # yerleşik ve tabloların elle doğrulanmasını kolaylaştırıyor.
 DAYS_PER_MONTH = 30
@@ -67,11 +70,13 @@ DEFAULT_BUCKETS: tuple[Bucket, ...] = (
     Bucket("90+ gün gecikmiş", 91, None, 0.50, 4),
 )
 
-# Sürgü sınırları (modules/scenario.py ile aynı olmalı). Türetilen öneri bu
-# aralığın dışına taşarsa kırpılır: kullanıcının ayarlayamayacağı bir değeri
-# "şunu uygula" diye önermek, uygulanamaz bir öneridir.
-DELAY_PROB_MAX = 0.80
-DELAY_SEVERITY_MAX = 0.80
+# Sürgü tavanları tek kaynaktan (modules/scenario.py) okunur, kopyalanmaz.
+# Türetilen öneri bu aralığın dışına taşarsa kırpılır: kullanıcının
+# ayarlayamayacağı bir değeri "şunu uygula" diye önermek uygulanamaz bir
+# öneridir. Kopyalansaydı sürgü genişletildiğinde burası eski tavanda kırpmaya
+# devam eder ve `clamped` uyarısı yanlış sınırı raporlardı.
+DELAY_PROB_MAX = scenario.oran_sinirlari("gecikme")[1]
+DELAY_SEVERITY_MAX = scenario.oran_sinirlari("kayan")[1]
 
 
 @dataclass
@@ -123,9 +128,12 @@ class AgingProfile:
     overdue_amount: float = 0.0
     weighted_overdue_days: float = 0.0
     dso: float | None = None                 # bakiye ÷ aylık gelir × 30
-    declared_collection_days: float | None = None
     listed_amount: float = 0.0               # kalem kalem listelenen tutar
-    unlisted_amount: float = 0.0             # bakiyenin listelenmeyen kısmı
+
+    @property
+    def unlisted_amount(self) -> float:
+        """Bakiyenin kalem kalem listelenmeyen kısmı — tanımı gereği türetilir."""
+        return max(0.0, self.total - self.listed_amount)
 
     @property
     def overdue_share(self) -> float:
@@ -163,20 +171,10 @@ def _classify(overdue_days: float, buckets: tuple[Bucket, ...]) -> Bucket:
     return buckets[-1]
 
 
-def _as_float(value, default: float = 0.0) -> float:
-    """Kullanıcı verisi güvenilmezdir: çevrilemeyeni sessizce varsayılana çevir."""
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return default
-    return default if out != out else out   # NaN
-
-
 def age(
     receivables,
     total_outstanding: float | None = None,
     monthly_revenue: float | None = None,
-    declared_collection_days: float | None = None,
     buckets: tuple[Bucket, ...] = DEFAULT_BUCKETS,
 ) -> AgingProfile:
     """
@@ -242,10 +240,7 @@ def age(
         overdue_amount=gecikmis,
         weighted_overdue_days=agirlikli,
         dso=dso,
-        declared_collection_days=(None if declared_collection_days is None
-                                  else _as_float(declared_collection_days)),
         listed_amount=listelenen,
-        unlisted_amount=listelenmeyen,
     )
 
 

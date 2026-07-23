@@ -31,6 +31,8 @@ import calendar
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from utils.format import as_float as _as_float
+
 DEFAULT_WEEKS = 13
 DAYS_PER_WEEK = 7
 
@@ -54,10 +56,14 @@ class WeekRow:
     """Tek bir haftanın nakit özeti."""
     index: int                  # 1..weeks
     start: date
-    end: date
     inflow: float
     outflow: float
     closing_cash: float
+
+    @property
+    def end(self) -> date:
+        """Hafta bitişi — tanımı gereği başlangıç + 6 gün, saklanmaz."""
+        return self.start + timedelta(days=DAYS_PER_WEEK - 1)
 
     @property
     def net(self) -> float:
@@ -69,8 +75,19 @@ class WeeklyPlan:
     """13 haftalık likidite tablosu."""
     weeks: list[WeekRow] = field(default_factory=list)
     opening_cash: float = 0.0
-    informative: bool = False       # tarihli kalem var mı (bkz. modül başlığı)
     dated_items: list[str] = field(default_factory=list)
+
+    @property
+    def informative(self) -> bool:
+        """
+        Tablo ay-içi bilgi taşıyor mu? (bkz. modül başlığı)
+
+        Ayrı bir alan olarak saklanıyordu ve `bool(dated_items)` ile aynı şeydi.
+        İki alan tek gerçeği kodlayınca bir yol onları tutarsız bırakabilir; o
+        yolda kaybolan şey de tam olarak "bu görünüm bilgi taşımıyor" dürüstlük
+        uyarısı olurdu.
+        """
+        return bool(self.dated_items)
 
     @property
     def min_week(self) -> WeekRow | None:
@@ -98,14 +115,6 @@ class WeeklyPlan:
 
 def _last_day(year: int, month: int) -> int:
     return calendar.monthrange(year, month)[1]
-
-
-def _as_float(value, default: float = 0.0) -> float:
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return default
-    return default if out != out else out
 
 
 def parse_start(as_of, fallback: date | None = None) -> date:
@@ -197,13 +206,11 @@ def build(
         satirlar.append(WeekRow(
             index=h + 1,
             start=start + timedelta(days=h * DAYS_PER_WEEK),
-            end=start + timedelta(days=(h + 1) * DAYS_PER_WEEK - 1),
             inflow=giris, outflow=cikis, closing_cash=kasa,
         ))
 
     return WeeklyPlan(
         weeks=satirlar,
         opening_cash=_as_float(current_cash),
-        informative=bool(tarihli),
         dated_items=tarihli,
     )

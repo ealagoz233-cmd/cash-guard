@@ -102,8 +102,19 @@ def _build_shock_matrices(p: StressParams, rng: np.random.Generator):
     return revenue, expense
 
 
-def run(p: StressParams) -> StressResult:
-    """Modül 2 ana fonksiyonu: simülasyonu koşturup StressResult döndürür."""
+def run(p: StressParams, full: bool = True) -> StressResult:
+    """
+    Modül 2 ana fonksiyonu: simülasyonu koşturup StressResult döndürür.
+
+    `full=False` yalnızca batma olasılığını hesaplar; fan chart bantları, örnek
+    yollar ve dönem sonu kasa istatistikleri atlanır. Tornado ve kredi taraması
+    onlarca koşu yapıyor ve bu alanların HİÇBİRİNİ okumuyor — 50.000 iterasyonda
+    yüzdelik hesabı tek başına ~20 ms, yani boşa yapılan iş toplam sürenin
+    dörtte birine yaklaşıyordu.
+
+    Batma olasılığı iki yolda da BİREBİR aynıdır: atlanan adımların hepsi
+    `ruined` hesaplandıktan sonra gelir.
+    """
     rng = np.random.default_rng(p.seed)
     revenue, expense = _build_shock_matrices(p, rng)
 
@@ -113,6 +124,13 @@ def run(p: StressParams) -> StressResult:
     )
 
     ruin_prob = float(ruined.mean())
+    if not full:
+        return StressResult(
+            ruin_probability=ruin_prob,
+            sample_paths=np.empty((0, p.months)),
+            n_iter=p.n_iter,
+            acceleration=ACCELERATION,
+        )
 
     # ── Yüzdelik bantları (fan chart için) ────────────────────────────────
     pct = np.percentile(paths, [5, 25, 50, 75, 95], axis=0)
