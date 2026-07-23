@@ -83,6 +83,38 @@ def test_baseline_matches_a_plain_simulation():
     assert sweep(p, _kredi(), steps=5).baseline.ruin_probability == run(p).ruin_probability
 
 
+def test_sharing_the_shock_matrix_changes_no_number():
+    """
+    Taramanın hız kazancının TAMAMI şu iddiaya dayanıyor: on üç tutar aynı şok
+    matrisini paylaşabilir, çünkü değişen tek şey kasa ve taksit.
+
+    İddia doğruysa paylaşımlı ve paylaşımsız koşular BİREBİR aynı olasılığı
+    verir. Yanlışsa ceza çöken bir program değil — makul görünen, sessizce
+    yanlış bir eğri ve ona bakarak verilen bir borçlanma kararı olurdu.
+
+    Şimdiye kadar yalnızca sıfır noktası (`baseline`) bağlıydı; oysa sıfır
+    noktası şokun paylaşıldığı tek tutar DEĞİL, paylaşımın hiç fark yaratmadığı
+    tek tutardı. Asıl iddia geri kalan on ikisinde.
+    """
+    from dataclasses import replace
+
+    from modules.monte_carlo import run
+
+    stres, kredi = _stres(), _kredi()
+    paylasimli = sweep(stres, kredi, steps=7)
+
+    for nokta in paylasimli.points:
+        det = ls.simulate(replace(kredi, loan_amount=nokta.amount))
+        tek_basina = run(replace(
+            stres,
+            current_cash=stres.current_cash + nokta.amount,
+            monthly_debt_service=stres.monthly_debt_service + det["installment"],
+        ))
+        assert nokta.ruin_probability == tek_basina.ruin_probability, (
+            f"{nokta.amount:,.0f} TL: paylaşımlı {nokta.ruin_probability} vs "
+            f"tek başına {tek_basina.ruin_probability}")
+
+
 def test_installment_grows_with_the_amount():
     r = sweep(_stres(), _kredi(), steps=5)
     taksitler = [p.installment for p in r.points]
