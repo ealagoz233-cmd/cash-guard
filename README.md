@@ -432,7 +432,7 @@ cash-guard/
 │   ├── format.py                # Arayüzden bağımsız biçimlendirme (motor kullanır)
 │   ├── theme.py                 # "War-room" karanlık tema, KPI kartları, CSS
 │   └── performance_utils.py     # Numba/NumPy nakit yolu çekirdeği
-├── tests/                       # 220 test, 15 dosya
+├── tests/                       # 226 test, 15 dosya
 │   ├── test_finance_math.py     # Kredi matematiği + Monte Carlo değişmezleri
 │   ├── test_runway.py           # Statik/trend runway, Theil–Sen dayanıklılığı
 │   ├── test_data_integrity.py   # Mock veri tutarlılığı + yükleme dayanıklılığı
@@ -552,12 +552,12 @@ python -m pytest tests/ -q          # pytest ile
 python tests/test_finance_math.py   # ya da tek tek, bağımlılıksız
 ```
 
-**220 test**, on beş dosyada:
+**226 test**, on beş dosyada:
 
 | Dosya | Neyi korur |
 |-------|-----------|
 | `test_data_integrity.py` (33) | Mock verinin ortalamalarının skalerlerle birebir tutması, kasa yürüyüşünün sapmasız olması, eksik sütunlu CSV'nin uygulamayı çökertmemesi, Türkçe/Excel biçimlerinin okunması, Türkçe etiketler |
-| `test_finance_math.py` (20) | Annüite formülü elle hesaplanmış değerle; itfa tablosunda anapara toplamı = kredi ve vade sonu bakiye = 0; Monte Carlo değişmezleri (olasılık aralığı, tohum tekrarlanabilirliği, yüzdelik bantların sıralaması, "stres artınca batma olasılığı düşemez"); **vektörize çekirdeğin naif referans döngüyle birebir eşitliği** |
+| `test_finance_math.py` (26) | Annüite formülü elle hesaplanmış değerle; itfa tablosunda anapara toplamı = kredi ve vade sonu bakiye = 0; Monte Carlo değişmezleri (olasılık aralığı, tohum tekrarlanabilirliği, yüzdelik bantların sıralaması, "stres artınca batma olasılığı düşemez"); **vektörize çekirdeğin naif referans döngüyle birebir eşitliği** |
 | `test_app_wiring.py` (14) | Arayüz kablolaması: Streamlit `AppTest` ile uçtan uca kaydetme, geri yükleme ve paylaşılabilir link akışı |
 | `test_ai_cfo.py` (13) | Sağlayıcı sırası ve hataya karşı bir sonrakine geçiş, anahtarsız kural tabanlı motora düşüş, teşhis mesajı, anahtarın çıktıya sızmaması |
 | `test_report.py` (14) | PDF gerçekten üretiliyor mu, Türkçe karakter için font seçimi ve para birimi kararı |

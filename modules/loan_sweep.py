@@ -29,7 +29,7 @@ from dataclasses import dataclass, field, replace
 
 from modules import loan_simulator as ls
 from modules import scenario
-from modules.monte_carlo import StressParams, run
+from modules.monte_carlo import StressParams, build_shocks, run
 
 # Arayüzdeki kredi sürgüsünün üst sınırı — tek kaynaktan okunur, kopyalanmaz.
 DEFAULT_MAX_AMOUNT = scenario.sinirlar("kredi")[1]
@@ -136,8 +136,15 @@ def sweep(
 
     Maliyet: adım sayısı kadar Monte Carlo (varsayılan 13). Hepsi aynı tohumu
     paylaşır, dolayısıyla eğri gürültüsüz ve tekrarlanabilirdir.
+
+    Bu "aynı tohum" artık yalnızca bir vaat değil, paylaşılan tek bir şok
+    matrisi: tutarlar arasında değişen tek şey kasa ve taksit, yani şokun kendisi
+    tanımı gereği sabit. Eskiden 13 koşunun her biri milyonlarca rastgele sayıyı
+    yeniden üretiyordu; ölçümde taramanın süresinin dörtte üçü buydu.
     """
     noktalar: list[SweepPoint] = []
+    # Ortak rastgele sayılar, tek kurulum: her adım aynı matrisi okur.
+    shocks = build_shocks(stress)
 
     for tutar in amount_grid(max_amount, steps):
         det = ls.simulate(replace(loan, loan_amount=float(tutar)))
@@ -149,7 +156,7 @@ def sweep(
             stress,
             current_cash=stress.current_cash + tutar,
             monthly_debt_service=stress.monthly_debt_service + taksit,
-        ), full=False)
+        ), full=False, shocks=shocks)
 
         noktalar.append(SweepPoint(
             amount=float(tutar),

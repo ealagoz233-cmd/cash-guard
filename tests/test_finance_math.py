@@ -19,9 +19,11 @@ matematiğe dayanıyor. Burada üç şey doğrulanır:
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -46,6 +48,17 @@ def _params(**over):
                 months=12, n_iter=2_000, seed=42)
     base.update(over)
     return mc.StressParams(**base)
+
+
+def _taze():
+    """
+    Batma olasılığı önbelleğini boşaltır.
+
+    Bunu çağırmayan bir test, hızlandırmayı ölçtüğünü sanırken kendi önceki
+    koşusunun önbellek kaydını okur ve HER ZAMAN geçer — yani asıl doğrulamak
+    istediği eşitliği hiç doğrulamaz.
+    """
+    mc._RUIN_MEMO.clear()
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -145,12 +158,101 @@ def test_summary_only_run_gives_the_identical_probability():
     ekrandaki manşet ile o iki panelin tabanı sessizce farklılaşır.
     """
     p = _params()
-    tam, hizli = mc.run(p), mc.run(p, full=False)
+    _taze()
+    hizli = mc.run(p, full=False)     # ÖNCE: önbellekten değil, gerçekten koşsun
+    _taze()
+    tam = mc.run(p)
     assert hizli.ruin_probability == tam.ruin_probability
     assert hizli.n_iter == tam.n_iter
     # Atlanan alanlar gerçekten üretilmemeli, yoksa tasarruf da yok
     assert hizli.sample_paths.size == 0
     assert hizli.percentiles == {}
+
+
+# ── Paylaşılan şok matrisleri ve olasılık önbelleği ───────────────────────
+def test_shared_shocks_give_the_identical_probability():
+    """
+    Paylaşılan matrisle koşmak, matrisi kendi kuran koşuyla BİREBİR aynı
+    olasılığı vermeli. Kredi taramasının 13 adımının tamamı bu yolda koşuyor;
+    yol ayrışırsa tarama eğrisi manşet sayıyla tutmaz hâle gelir.
+    """
+    p = _params()
+    _taze()
+    tek_basina = mc.run(p, full=False).ruin_probability
+    _taze()
+    paylasimli = mc.run(p, full=False, shocks=mc.build_shocks(p)).ruin_probability
+    assert paylasimli == tek_basina
+
+
+def test_shared_shocks_cover_the_two_fields_the_sweep_moves():
+    """
+    Taramanın oynattığı iki alan (kasa, borç servisi) şoku DEĞİŞTİRMEZ; bu
+    yüzden matris paylaşılabilir. Sözleşme buysa, bu iki alan değişince
+    paylaşımlı ve tek başına koşu yine aynı sayıyı vermeli.
+    """
+    taban = _params()
+    shocks = mc.build_shocks(taban)
+    tasinan = replace(taban, current_cash=taban.current_cash + 10_000_000,
+                      monthly_debt_service=taban.monthly_debt_service + 400_000)
+    _taze()
+    tek_basina = mc.run(tasinan, full=False).ruin_probability
+    _taze()
+    paylasimli = mc.run(tasinan, full=False, shocks=shocks).ruin_probability
+    assert paylasimli == tek_basina
+
+
+@pytest.mark.parametrize("alan,deger", [
+    ("income_drop", 0.25), ("volatility", 0.30), ("delay_prob", 0.55),
+    ("delay_severity", 0.60), ("expense_inflation", 0.30),
+    ("n_iter", 3_000), ("seed", 7), ("months", 18),
+    ("monthly_revenue", 9_000_000), ("monthly_fixed_expense", 1_000_000),
+])
+def test_shared_shocks_refuse_parameters_they_were_not_built_for(alan, deger):
+    """
+    Şoku belirleyen bir alan değişmişse eski matris SESSİZCE kullanılmamalı.
+
+    Cezası çöken bir program değil, makul görünen yanlış bir olasılık olurdu:
+    kullanıcı hiçbir belirti görmeden başka bir senaryonun sayısına bakardı.
+    """
+    taban = _params()
+    shocks = mc.build_shocks(taban)
+    with pytest.raises(ValueError):
+        mc.run(replace(taban, **{alan: deger}), full=False, shocks=shocks)
+
+
+def test_probability_memo_returns_what_a_fresh_run_computes():
+    """Önbellekten dönen sayı, yeniden hesaplananla birebir aynı olmalı."""
+    p = _params(current_cash=3_000_000)
+    _taze()
+    ilk = mc.run(p, full=False).ruin_probability
+    onbellekten = mc.run(p, full=False).ruin_probability
+    _taze()
+    yeniden = mc.run(p, full=False).ruin_probability
+    assert onbellekten == ilk == yeniden
+
+
+def test_full_run_fills_the_memo_for_the_summary_path():
+    """
+    Manşet koşusu (full=True) ile tornado'nun tabanı ve taramanın sıfır noktası
+    AYNI senaryoyu ölçüyor. Manşet sonucu önbelleğe yazmazsa aynı hesap üç kez
+    yapılır.
+    """
+    p = _params(current_cash=3_300_000)
+    _taze()
+    tam = mc.run(p)
+    assert mc._RUIN_MEMO, "full=True koşusu önbelleğe yazmalı"
+    assert mc.run(p, full=False).ruin_probability == tam.ruin_probability
+
+
+def test_memo_stays_out_of_the_way_when_there_is_no_seed():
+    """
+    Tohumsuz koşu tanımı gereği her seferinde farklıdır; önbelleğe alınırsa
+    kullanıcı rastgeleliği kapatmadığı hâlde donmuş bir sayı görür.
+    """
+    p = _params(seed=None)
+    _taze()
+    mc.run(p, full=False)
+    assert not mc._RUIN_MEMO
 
 
 def test_ruin_histogram_matches_ruined_count():

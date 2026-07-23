@@ -67,6 +67,54 @@ class StressResult:
     acceleration: str = ACCELERATION
 
 
+# Şok matrislerini BELİRLEYEN alanlar. Buradaki her alan matrisin içeriğine
+# girer; listede OLMAYAN iki alan (`current_cash`, `monthly_debt_service`)
+# yalnızca nakit yolunu kaydırır, şoku değiştirmez. Kredi taraması tam da bu iki
+# alanı oynattığı için 13 koşunun hepsi AYNI şoku kullanabilir.
+SHOCK_FIELDS = (
+    "monthly_revenue", "monthly_fixed_expense",
+    "income_drop", "volatility", "delay_prob", "delay_severity",
+    "expense_inflation", "months", "n_iter", "seed",
+)
+
+
+def _shock_signature(p: StressParams) -> tuple:
+    return tuple(getattr(p, f) for f in SHOCK_FIELDS)
+
+
+@dataclass(frozen=True)
+class Shocks:
+    """
+    Bir kez kurulup birden çok koşuda paylaşılabilen şok matrisleri.
+
+    `signature` bilerek taşınıyor: yanlış parametrelerle kurulmuş bir matrisi
+    yeniden kullanmak sessizce YANLIŞ bir batma olasılığı üretirdi ve hiçbir
+    test bunu yakalayamazdı — çünkü sonuç hâlâ makul görünen bir sayı olurdu.
+    `run` imzayı karşılaştırır ve uymuyorsa istisna atar.
+    """
+    revenue: np.ndarray
+    expense: np.ndarray
+    signature: tuple
+
+    def matches(self, p: StressParams) -> bool:
+        return self.signature == _shock_signature(p)
+
+
+def build_shocks(p: StressParams) -> Shocks:
+    """
+    Şok matrislerini bir kez kurup paylaşılabilir hâlde döndürür.
+
+    Kredi taraması varsayılan 13 tutarı dener ve her tutarda yalnızca kasa ile
+    taksit değişir; şok matrisleri her seferinde sıfırdan üretiliyordu. Ölçüm:
+    50.000 iterasyonda tarama süresinin dörtte üçünden fazlası bu tekrar eden
+    matris kurulumuydu (rastgele sayı üretimi + kırpma), sıralı nakit döngüsü
+    değil.
+    """
+    rng = np.random.default_rng(p.seed)
+    revenue, expense = _build_shock_matrices(p, rng)
+    return Shocks(revenue=revenue, expense=expense, signature=_shock_signature(p))
+
+
 def _build_shock_matrices(p: StressParams, rng: np.random.Generator):
     """
     Gelir ve gider için (n_iter, months) şok matrislerini üretir.
@@ -102,7 +150,36 @@ def _build_shock_matrices(p: StressParams, rng: np.random.Generator):
     return revenue, expense
 
 
-def run(p: StressParams, full: bool = True) -> StressResult:
+# Yalnızca-özet koşuların batma olasılığı burada saklanır. Anahtar parametre
+# demetinin TAMAMI olduğu için yanlış eşleşme mümkün değil; tohum sabitken koşu
+# deterministik olduğundan önbellekten dönen sayı yeniden hesaplananla birebir
+# aynıdır. Kazanç: manşet Monte Carlo, tornado'nun tabanı ve taramanın sıfır
+# noktası AYNI senaryoyu ölçüyor ve üç kez koşuyordu; artık bir kez koşuyor.
+#
+# Bellekte yalnızca birer float durur (matris değil), o yüzden tavan cömert.
+_RUIN_MEMO: dict[tuple, float] = {}
+_MEMO_MAX = 512
+
+
+def _summary_result(ruin_prob: float, p: StressParams) -> StressResult:
+    """Yalnızca-özet koşunun döndürdüğü nesne (tek yerde kurulsun)."""
+    return StressResult(
+        ruin_probability=ruin_prob,
+        sample_paths=np.empty((0, p.months)),
+        n_iter=p.n_iter,
+        acceleration=ACCELERATION,
+    )
+
+
+def _memo_key(p: StressParams) -> tuple | None:
+    """Tohum yoksa koşu deterministik değildir; önbelleğe girmemeli."""
+    if p.seed is None:
+        return None
+    return (*_shock_signature(p), p.current_cash, p.monthly_debt_service)
+
+
+def run(p: StressParams, full: bool = True,
+        shocks: Shocks | None = None) -> StressResult:
     """
     Modül 2 ana fonksiyonu: simülasyonu koşturup StressResult döndürür.
 
@@ -112,11 +189,34 @@ def run(p: StressParams, full: bool = True) -> StressResult:
     yüzdelik hesabı tek başına ~20 ms, yani boşa yapılan iş toplam sürenin
     dörtte birine yaklaşıyordu.
 
-    Batma olasılığı iki yolda da BİREBİR aynıdır: atlanan adımların hepsi
-    `ruined` hesaplandıktan sonra gelir.
+    `shocks` verilirse matrisler yeniden kurulmaz (bkz. `build_shocks`). Verilen
+    matrislerin parametrelerle uyuştuğu doğrulanır: uyuşmazlığın cezası çöken bir
+    program değil, makul görünen yanlış bir olasılık olurdu.
+
+    Batma olasılığı üç yolda da BİREBİR aynıdır: atlanan adımların hepsi
+    `ruined` hesaplandıktan sonra gelir, paylaşılan matris de aynı tohumdan
+    üretilmiştir.
     """
+    if shocks is not None and not shocks.matches(p):
+        raise ValueError(
+            "Paylaşılan şok matrisleri bu parametrelerle kurulmamış. "
+            "Yalnızca current_cash ve monthly_debt_service değişebilir; "
+            "diğer alanlardan biri değiştiyse build_shocks yeniden çağrılmalı."
+        )
+
+    memo_key = _memo_key(p)
+    # Yalnızca özet isteniyorsa önbellek cevabı tamdır; `full=True` zaten
+    # dizileri de üretmek zorunda olduğu için koşuyu atlayamaz — ama sonucunu
+    # önbelleğe YAZAR, çünkü manşet koşunun ölçtüğü olasılığı tornado ile
+    # tarama da soruyor.
+    if not full and memo_key is not None and memo_key in _RUIN_MEMO:
+        return _summary_result(_RUIN_MEMO[memo_key], p)
+
     rng = np.random.default_rng(p.seed)
-    revenue, expense = _build_shock_matrices(p, rng)
+    if shocks is None:
+        revenue, expense = _build_shock_matrices(p, rng)
+    else:
+        revenue, expense = shocks.revenue, shocks.expense
 
     # Sıralı nakit yolu (numba/NumPy) — path-dependent temerrüt tespiti
     paths, ruined, ruin_month = simulate_paths(
@@ -124,13 +224,12 @@ def run(p: StressParams, full: bool = True) -> StressResult:
     )
 
     ruin_prob = float(ruined.mean())
+    if memo_key is not None:
+        if len(_RUIN_MEMO) >= _MEMO_MAX:
+            _RUIN_MEMO.clear()       # LRU'ya gerek yok: tavan zaten çok uzakta
+        _RUIN_MEMO[memo_key] = ruin_prob
     if not full:
-        return StressResult(
-            ruin_probability=ruin_prob,
-            sample_paths=np.empty((0, p.months)),
-            n_iter=p.n_iter,
-            acceleration=ACCELERATION,
-        )
+        return _summary_result(ruin_prob, p)
 
     # ── Yüzdelik bantları (fan chart için) ────────────────────────────────
     pct = np.percentile(paths, [5, 25, 50, 75, 95], axis=0)
@@ -138,6 +237,10 @@ def run(p: StressParams, full: bool = True) -> StressResult:
                    "p75": pct[3], "p95": pct[4]}
 
     # ── Çizim için örnek ham yollar ───────────────────────────────────────
+    # `rng` matris kurulumundan sonraki konumunda; paylaşılan matris verilmişse
+    # o adım atlandığı için ÇEKİLEN 150 yolun kimlikleri farklı olur. İstatistik
+    # değil çizim örneği olduğu için bu bir fark değil, aynı dağılımdan başka bir
+    # örnek — batma olasılığı, bantlar ve dönem sonu kasa aynen aynı kalır.
     k = min(PLOT_SAMPLE_PATHS, p.n_iter)
     idx = rng.choice(p.n_iter, size=k, replace=False)
     sample = paths[idx]
