@@ -220,6 +220,85 @@ def test_shared_shocks_refuse_parameters_they_were_not_built_for(alan, deger):
         mc.run(replace(taban, **{alan: deger}), full=False, shocks=shocks)
 
 
+def test_raw_draws_are_exactly_what_numpy_would_have_drawn():
+    """
+    Şok matrisi iki adıma ayrıldı: ham çekim + parametre dönüşümü. Ayrımın
+    dayandığı eşitlik `rng.normal(ortalama, sapma) == ortalama + sapma·z` ve bu
+    eşitlik BİREBİR olmalı — yaklaşık değil.
+
+    Bozulursa hiçbir şey çökmez: tornado sessizce başka bir senaryonun
+    sayılarını gösterir. Bu yüzden referans, NumPy'ın kendi çağrısıdır.
+    """
+    p = _params()
+    m = p.months
+    ramp = np.arange(1, m + 1) / m
+
+    ref = np.random.default_rng(p.seed)
+    gelir_ref = np.clip(
+        ref.normal(1.0 - p.income_drop * ramp, p.volatility, size=(p.n_iter, m)),
+        0.0, None) * p.monthly_revenue
+    u_ref = ref.random((p.n_iter, m))
+    gider_ref = np.clip(
+        ref.normal(1.0 + p.expense_inflation * ramp, p.volatility * 0.6,
+                   size=(p.n_iter, m)), 0.0, None) * p.monthly_fixed_expense
+    idx_ref = ref.choice(p.n_iter, size=min(mc.PLOT_SAMPLE_PATHS, p.n_iter),
+                         replace=False)
+
+    yeni = np.random.default_rng(p.seed)
+    d = mc.build_draws(p, yeni)
+    gelir, gider = mc._build_shock_matrices(p, d)
+    idx = yeni.choice(p.n_iter, size=min(mc.PLOT_SAMPLE_PATHS, p.n_iter),
+                      replace=False)
+
+    # Gecikme kayması gelire binmiş durumda; ham gelirin kendisi yerine
+    # üreticinin AYNI noktada olduğunu ve gider ile uniform'un tuttuğunu ara.
+    assert np.array_equal(d.delay_u, u_ref)
+    assert np.array_equal(gider, gider_ref)
+    assert np.array_equal(idx, idx_ref), (
+        "üretici farklı noktada kaldı: full=True koşusunun çizdiği örnek "
+        "yollar sessizce değişirdi")
+    kayma = gelir_ref * p.delay_severity * (u_ref < p.delay_prob)
+    beklenen = gelir_ref - kayma
+    beklenen[:, 1:] += kayma[:, :-1]
+    assert np.array_equal(gelir, beklenen)
+
+
+@pytest.mark.parametrize("alan,deger", [
+    ("income_drop", 0.25), ("volatility", 0.30), ("delay_prob", 0.55),
+    ("delay_severity", 0.60), ("expense_inflation", 0.30),
+    ("current_cash", 9_000_000), ("monthly_debt_service", 1_400_000),
+    ("monthly_revenue", 7_400_000), ("monthly_fixed_expense", 5_100_000),
+])
+def test_shared_draws_serve_every_slider_the_tornado_moves(alan, deger):
+    """
+    Ham çekim yalnızca boyuta (n_iter, months, seed) bağlıdır; hiçbir stres
+    sürgüsüne değil. Sözleşme buysa, paylaşılan çekimle koşan bir senaryo kendi
+    çekimini yapanla BİREBİR aynı olasılığı vermeli.
+
+    Tornado'nun on bir koşusunun tamamı bu yolda; ayrışırsa barlar manşet
+    sayının ölçtüğünden başka bir şeyi ölçer.
+    """
+    taban = _params()
+    draws = mc.build_draws(taban)
+    senaryo = replace(taban, **{alan: deger})
+    _taze()
+    tek_basina = mc.run(senaryo, full=False).ruin_probability
+    _taze()
+    paylasimli = mc.run(senaryo, full=False, draws=draws).ruin_probability
+    assert paylasimli == tek_basina
+
+
+@pytest.mark.parametrize("alan,deger", [
+    ("n_iter", 3_000), ("months", 18), ("seed", 7),
+])
+def test_shared_draws_refuse_a_different_shape(alan, deger):
+    """Boyutu belirleyen üç alan değiştiyse eski çekim sessizce kullanılmamalı."""
+    taban = _params()
+    draws = mc.build_draws(taban)
+    with pytest.raises(ValueError):
+        mc.run(replace(taban, **{alan: deger}), full=False, draws=draws)
+
+
 def test_probability_memo_returns_what_a_fresh_run_computes():
     """Önbellekten dönen sayı, yeniden hesaplananla birebir aynı olmalı."""
     p = _params(current_cash=3_000_000)

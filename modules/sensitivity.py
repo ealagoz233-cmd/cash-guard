@@ -30,7 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from modules import scenario
-from modules.monte_carlo import StressParams, run
+from modules.monte_carlo import StressParams, build_draws, run
 
 # Oynatma adımı: 5 puan (0.05). Sürgüler yüzde puanı cinsinden okunduğu için
 # "her sürgüyü 5 puan oynat" kullanıcı için doğrudan anlamlı bir cümledir.
@@ -132,7 +132,14 @@ def tornado(base: StressParams, delta: float = DEFAULT_DELTA) -> TornadoResult:
     """
     # `full=False`: bu modül yalnızca batma olasılığını okuyor. Fan chart
     # bantları ve örnek yollar 11 koşuda da üretilip atılıyordu.
-    base_result = run(base, full=False)
+    #
+    # Ham çekimler de TEK kez üretiliyor. Sürgülerin hepsi çekimi değil, çekimin
+    # üzerine binen dönüşümü değiştirir (`rng.normal(ortalama, sapma)` zaten
+    # `ortalama + sapma·z` demek), dolayısıyla on bir koşu aynı z'leri
+    # paylaşabilir. Bu, modülün başlığındaki "ortak rastgele sayılar" sözünü
+    # bir yan etki olmaktan çıkarıp kodda görünür hâle de getiriyor.
+    draws = build_draws(base)
+    base_result = run(base, full=False, draws=draws)
     impacts: list[DriverImpact] = []
 
     for drv in DRIVERS:
@@ -148,8 +155,8 @@ def tornado(base: StressParams, delta: float = DEFAULT_DELTA) -> TornadoResult:
                 base_result.ruin_probability, base_result.ruin_probability))
             continue
 
-        low = run(replace(base, **{drv.key: low_value}), full=False)
-        high = run(replace(base, **{drv.key: high_value}), full=False)
+        low = run(replace(base, **{drv.key: low_value}), full=False, draws=draws)
+        high = run(replace(base, **{drv.key: high_value}), full=False, draws=draws)
         impacts.append(DriverImpact(
             drv.key, drv.label, low_value, high_value,
             low.ruin_probability, high.ruin_probability))

@@ -100,7 +100,55 @@ class Shocks:
         return self.signature == _shock_signature(p)
 
 
-def build_shocks(p: StressParams) -> Shocks:
+# ── Ham çekimler: parametrelerden BAĞIMSIZ olan kısım ─────────────────────
+# Şok matrisi iki adımdır: (1) rastgele sayıları çek, (2) parametrelerle
+# dönüştür. `rng.normal(ortalama, sapma)` aslında `ortalama + sapma·z` demek ve
+# aynı tohumda AYNI z'leri kullanır — yani çekim yalnızca (n_iter, months, seed)
+# üçlüsüne bağlıdır, hiçbir stres sürgüsüne değil.
+#
+# Bunu ayırmanın kazancı tornado'da: beş sürgünün on bir koşusu bugüne kadar
+# milyonlarca rastgele sayıyı on bir kez üretiyordu, oysa hepsi aynı çekimi
+# paylaşabilir. Dahası, modülün baştan beri verdiği "ortak rastgele sayılar"
+# sözü artık bir yan etki değil, kodda görünen bir yapı.
+DRAW_FIELDS = ("months", "n_iter", "seed")
+
+
+def _draw_signature(p: StressParams) -> tuple:
+    return tuple(getattr(p, f) for f in DRAW_FIELDS)
+
+
+@dataclass(frozen=True)
+class Draws:
+    """Ham rastgele çekimler; hiçbir stres parametresi içermez."""
+    income_z: np.ndarray      # gelir şoku için standart normaller
+    delay_u: np.ndarray       # gecikme kurası için düzgün dağılım
+    expense_z: np.ndarray     # gider şoku için standart normaller
+    signature: tuple
+
+    def matches(self, p: StressParams) -> bool:
+        return self.signature == _draw_signature(p)
+
+
+def build_draws(p: StressParams,
+                rng: np.random.Generator | None = None) -> Draws:
+    """
+    Ham çekimleri üretir. Sıra ÖNEMLİ: gelir → gecikme → gider.
+
+    `rng` dışarıdan verilirse tüketim onun üzerinden yapılır ve akış tam olarak
+    eski koddaki kadar ilerler; böylece `run` içindeki örnek yol seçimi (aynı
+    üreticiden çekilir) bit düzeyinde aynı kalır.
+    """
+    rng = np.random.default_rng(p.seed) if rng is None else rng
+    boyut = (p.n_iter, p.months)
+    return Draws(
+        income_z=rng.standard_normal(boyut),
+        delay_u=rng.random(boyut),
+        expense_z=rng.standard_normal(boyut),
+        signature=_draw_signature(p),
+    )
+
+
+def build_shocks(p: StressParams, draws: Draws | None = None) -> Shocks:
     """
     Şok matrislerini bir kez kurup paylaşılabilir hâlde döndürür.
 
@@ -109,13 +157,21 @@ def build_shocks(p: StressParams) -> Shocks:
     50.000 iterasyonda tarama süresinin dörtte üçünden fazlası bu tekrar eden
     matris kurulumuydu (rastgele sayı üretimi + kırpma), sıralı nakit döngüsü
     değil.
+
+    `draws` verilirse ham çekim de atlanır — sürgüsü değişen ama boyutu aynı
+    kalan koşular (tornado) için.
     """
-    rng = np.random.default_rng(p.seed)
-    revenue, expense = _build_shock_matrices(p, rng)
+    if draws is not None and not draws.matches(p):
+        raise ValueError(
+            "Paylaşılan ham çekimler bu boyutta üretilmemiş. "
+            f"Eşleşmesi gereken alanlar: {', '.join(DRAW_FIELDS)}."
+        )
+    d = build_draws(p) if draws is None else draws
+    revenue, expense = _build_shock_matrices(p, d)
     return Shocks(revenue=revenue, expense=expense, signature=_shock_signature(p))
 
 
-def _build_shock_matrices(p: StressParams, rng: np.random.Generator):
+def _build_shock_matrices(p: StressParams, draws: Draws):
     """
     Gelir ve gider için (n_iter, months) şok matrislerini üretir.
 
@@ -125,17 +181,20 @@ def _build_shock_matrices(p: StressParams, rng: np.random.Generator):
     olasılığının sürgülere anlamlı biçimde duyarlı kalmasını sağlar — aksi
     halde ortalama tek hamlede kayıp senaryoyu %100 batışa saplar.
     """
-    n, m = p.n_iter, p.months
+    m = p.months
     ramp = np.arange(1, m + 1) / m               # (m,) 0<...<=1 doğrusal artış
 
     # ── Gelir/tahsilat: ortalama çarpan (1 − income_drop·ramp) ────────────
+    # `rng.normal(ortalama, sapma)` ile BİREBİR aynı: NumPy de içeride tam
+    # olarak `ortalama + sapma·z` hesaplıyor. Ayrı yazmanın sebebi z'yi
+    # paylaşılabilir kılmak (bkz. Draws).
     income_mean = 1.0 - p.income_drop * ramp     # (m,) aya göre kayan ortalama
-    income_factor = rng.normal(income_mean, p.volatility, size=(n, m))
+    income_factor = income_mean + p.volatility * draws.income_z
     income_factor = np.clip(income_factor, 0.0, None)   # negatif tahsilat olmaz
     revenue = p.monthly_revenue * income_factor
 
     # ── Tahsilat gecikmesi: bazı aylarda tahsilatın bir kısmı sonraki aya kayar
-    delayed = rng.random((n, m)) < p.delay_prob         # bu ay gecikme var mı
+    delayed = draws.delay_u < p.delay_prob             # bu ay gecikme var mı
     shift = revenue * p.delay_severity * delayed         # kayan tutar
     revenue = revenue - shift                            # bu ay eksilir
     # kayan tutarı bir sonraki aya taşı (son ay ufuk dışına düşer, kaybolur)
@@ -143,7 +202,7 @@ def _build_shock_matrices(p: StressParams, rng: np.random.Generator):
 
     # ── Gider: ortalama çarpan (1 + expense_inflation·ramp) ───────────────
     exp_mean = 1.0 + p.expense_inflation * ramp
-    exp_factor = rng.normal(exp_mean, p.volatility * 0.6, size=(n, m))
+    exp_factor = exp_mean + (p.volatility * 0.6) * draws.expense_z
     exp_factor = np.clip(exp_factor, 0.0, None)
     expense = p.monthly_fixed_expense * exp_factor
 
@@ -179,7 +238,8 @@ def _memo_key(p: StressParams) -> tuple | None:
 
 
 def run(p: StressParams, full: bool = True,
-        shocks: Shocks | None = None) -> StressResult:
+        shocks: Shocks | None = None,
+        draws: Draws | None = None) -> StressResult:
     """
     Modül 2 ana fonksiyonu: simülasyonu koşturup StressResult döndürür.
 
@@ -189,19 +249,27 @@ def run(p: StressParams, full: bool = True,
     yüzdelik hesabı tek başına ~20 ms, yani boşa yapılan iş toplam sürenin
     dörtte birine yaklaşıyordu.
 
-    `shocks` verilirse matrisler yeniden kurulmaz (bkz. `build_shocks`). Verilen
-    matrislerin parametrelerle uyuştuğu doğrulanır: uyuşmazlığın cezası çöken bir
-    program değil, makul görünen yanlış bir olasılık olurdu.
+    Paylaşımın iki kademesi var:
+      • `shocks` — matrisler hazır (tarama: yalnızca kasa ve taksit değişiyor).
+      • `draws`  — ham çekimler hazır, dönüşüm burada yapılıyor (tornado:
+        sürgüler değişiyor ama boyut aynı).
+    İkisinin de parametrelerle uyuştuğu doğrulanır: uyuşmazlığın cezası çöken
+    bir program değil, makul görünen yanlış bir olasılık olurdu.
 
-    Batma olasılığı üç yolda da BİREBİR aynıdır: atlanan adımların hepsi
-    `ruined` hesaplandıktan sonra gelir, paylaşılan matris de aynı tohumdan
-    üretilmiştir.
+    Batma olasılığı bütün yollarda BİREBİR aynıdır: atlanan adımların hepsi
+    `ruined` hesaplandıktan sonra gelir; paylaşılan çekimler de aynı tohumdan
+    ve aynı sırayla üretilmiştir.
     """
     if shocks is not None and not shocks.matches(p):
         raise ValueError(
             "Paylaşılan şok matrisleri bu parametrelerle kurulmamış. "
             "Yalnızca current_cash ve monthly_debt_service değişebilir; "
             "diğer alanlardan biri değiştiyse build_shocks yeniden çağrılmalı."
+        )
+    if draws is not None and not draws.matches(p):
+        raise ValueError(
+            "Paylaşılan ham çekimler bu boyutta üretilmemiş. "
+            f"Eşleşmesi gereken alanlar: {', '.join(DRAW_FIELDS)}."
         )
 
     memo_key = _memo_key(p)
@@ -213,10 +281,14 @@ def run(p: StressParams, full: bool = True,
         return _summary_result(_RUIN_MEMO[memo_key], p)
 
     rng = np.random.default_rng(p.seed)
-    if shocks is None:
-        revenue, expense = _build_shock_matrices(p, rng)
-    else:
+    if shocks is not None:
         revenue, expense = shocks.revenue, shocks.expense
+    else:
+        # `draws` verilmemişse üretici BURADAN besleniyor; böylece akış tam
+        # olarak eski koddaki kadar ilerler ve aşağıdaki örnek yol seçimi bit
+        # düzeyinde aynı kalır.
+        d = build_draws(p, rng) if draws is None else draws
+        revenue, expense = _build_shock_matrices(p, d)
 
     # Sıralı nakit yolu (numba/NumPy) — path-dependent temerrüt tespiti
     paths, ruined, ruin_month = simulate_paths(

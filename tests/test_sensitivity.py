@@ -14,6 +14,7 @@ yanlışsa kullanıcı yanlış yere yatırım yapar, üstelik bunu fark etmesi 
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -144,6 +145,32 @@ def test_top_is_the_first_impact_when_it_matters():
     res = tornado(_params())
     assert res.top is res.impacts[0]
     assert abs(res.top.swing_pp) >= NEGLIGIBLE_SWING_PP
+
+
+def test_sharing_the_raw_draws_changes_no_number():
+    """
+    On bir koşu artık TEK bir ham çekimi paylaşıyor. Kazanç ancak sonuç
+    değişmiyorsa kazançtır: her uçtaki olasılık, kendi çekimini yapan bir
+    koşuyla BİREBİR aynı olmalı.
+
+    Ayrıca modülün "ortak rastgele sayılar" sözü artık yan etki değil yapı:
+    paylaşımlı ve tek başına koşunun aynı sayıyı vermesi, tohumun gerçekten
+    tek fark bırakan şey olduğunun kanıtı.
+    """
+    import modules.monte_carlo as mc
+
+    taban = _params()
+    res = tornado(taban)
+
+    mc._RUIN_MEMO.clear()
+    assert res.base_probability == run(taban, full=False).ruin_probability
+
+    for etki in res.impacts:
+        for deger, beklenen in ((etki.low_value, etki.low_probability),
+                                (etki.high_value, etki.high_probability)):
+            mc._RUIN_MEMO.clear()
+            tek = run(replace(taban, **{etki.key: deger}), full=False)
+            assert tek.ruin_probability == beklenen, etki.key
 
 
 if __name__ == "__main__":
