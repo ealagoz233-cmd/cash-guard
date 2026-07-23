@@ -14,6 +14,8 @@ fastapi kurulu değilse dosya atlanır — çekirdek uygulama API olmadan da
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
@@ -26,6 +28,13 @@ try:
 except Exception:                     # fastapi/httpx yok
     _API_VAR = False
 
+# Koşul TEK yerde. Eskiden her testin ilk satırı `if not _API_VAR: return`
+# kopyasıydı — on sekiz kopya, ve on dokuzuncuyu yazmayı unutmanın cezası
+# `NameError: client` ile kırmızıya dönen bir CI oldu (tam olarak öyle oldu).
+# `pytestmark` modüldeki HER teste, sonradan eklenene de, kendiliğinden biner.
+pytestmark = pytest.mark.skipif(not _API_VAR,
+                                reason="fastapi/httpx kurulu değil")
+
 
 _SIRKET = {
     "current_cash": 4_200_000,
@@ -36,16 +45,12 @@ _SIRKET = {
 
 
 def test_health_endpoint():
-    if not _API_VAR:
-        return
     y = client.get("/health")
     assert y.status_code == 200
     assert y.json()["status"] == "ok"
 
 
 def test_simulate_returns_a_probability():
-    if not _API_VAR:
-        return
     y = client.post("/simulate", json=_SIRKET)
     assert y.status_code == 200, y.text
     d = y.json()
@@ -60,8 +65,6 @@ def test_same_seed_gives_same_answer_over_http():
     Determinizm HTTP katmanından da geçmeli: aynı gövde iki kez gönderilince
     aynı sayı dönmeli. Aksi halde paylaşılan bir sonuç tekrar üretilemez.
     """
-    if not _API_VAR:
-        return
     a = client.post("/simulate", json=_SIRKET).json()
     b = client.post("/simulate", json=_SIRKET).json()
     assert a["ruin_probability"] == b["ruin_probability"]
@@ -73,16 +76,12 @@ def test_iteration_cap_is_enforced():
     Tavanın üstü 422 ile reddedilmeli — sessizce kırpılmamalı, çünkü kullanıcı
     istediğinden farklı bir hesap yaptığını bilmeli.
     """
-    if not _API_VAR:
-        return
     y = client.post("/simulate", json=_SIRKET | {"n_iter": MAX_ITER + 1})
     assert y.status_code == 422
     assert client.post("/simulate", json=_SIRKET | {"n_iter": MAX_ITER}).status_code == 200
 
 
 def test_invalid_input_is_rejected_not_crashed():
-    if not _API_VAR:
-        return
     kotu = [
         {},                                        # zorunlu alanlar yok
         _SIRKET | {"current_cash": -1},            # negatif kasa
@@ -96,8 +95,6 @@ def test_invalid_input_is_rejected_not_crashed():
 
 
 def test_sensitivity_endpoint_ranks_the_drivers():
-    if not _API_VAR:
-        return
     y = client.post("/sensitivity", json=_SIRKET)
     assert y.status_code == 200, y.text
     d = y.json()
@@ -114,8 +111,6 @@ def test_sensitivity_has_a_lower_iteration_cap():
     Bu uç tek istekte ~11 simülasyon koşar; /simulate'in tavanını aynen
     uygulamak yarım milyon senaryoluk tek istek demek olurdu.
     """
-    if not _API_VAR:
-        return
     assert MAX_ITER_SENSITIVITY < MAX_ITER
     ust = _SIRKET | {"n_iter": MAX_ITER_SENSITIVITY + 1}
     assert client.post("/sensitivity", json=ust).status_code == 422
@@ -128,8 +123,6 @@ def test_receivables_endpoint_matches_the_engine():
     Yaşlandırma da motorun bir parçası: HTTP katmanı kendi hesabını yapmaya
     başlarsa arayüz ile API aynı defter için farklı şüpheli alacak gösterir.
     """
-    if not _API_VAR:
-        return
     from modules import receivables as rc
 
     defter = [{"customer": "A", "amount": 3_000_000, "overdue_days": 120},
@@ -150,8 +143,6 @@ def test_receivables_endpoint_matches_the_engine():
 
 def test_receivables_endpoint_survives_an_empty_book():
     """Boş defter geçerli bir girdi: 422 değil, sıfırlı bir profil dönmeli."""
-    if not _API_VAR:
-        return
     y = client.post("/receivables", json={"receivables": []})
     assert y.status_code == 200, y.text
     assert y.json()["total"] == 0
@@ -164,8 +155,6 @@ def test_loan_sweep_endpoint_reports_both_horizons():
     riskli tutarı öner" diye yanlış bir kullanım kaçınılmaz olurdu. İki ufuk
     birlikte dönmeli.
     """
-    if not _API_VAR:
-        return
     y = client.post("/loan-sweep", json=_SIRKET | {
         "income_drop": 0.06, "volatility": 0.10, "delay_prob": 0.30,
         "delay_severity": 0.25, "expense_inflation": 0.10,
@@ -184,8 +173,6 @@ def test_loan_sweep_endpoint_reports_both_horizons():
 
 
 def test_weekly_endpoint_matches_the_engine():
-    if not _API_VAR:
-        return
     from modules import weekly as wk
 
     govde = {
@@ -214,8 +201,6 @@ def test_weekly_endpoint_matches_the_engine():
 
 def test_weekly_endpoint_admits_when_it_adds_nothing():
     """Gider dağılımı yoksa uç bunu bildirmeli — sessiz kalmak güven yaratırdı."""
-    if not _API_VAR:
-        return
     y = client.post("/weekly", json={
         "current_cash": 1_000_000, "monthly_collections": 500_000,
         "monthly_fixed_expense": 400_000,
@@ -225,8 +210,6 @@ def test_weekly_endpoint_admits_when_it_adds_nothing():
 
 
 def test_zscore_endpoint_matches_the_engine():
-    if not _API_VAR:
-        return
     from modules import zscore as zs
 
     bilanco = {
@@ -247,8 +230,6 @@ def test_zscore_endpoint_refuses_to_invent_a_score():
     X5 kullanan varyant yıllık satış olmadan hesaplanamaz. Uydurmak yerine
     eksik alanı bildirmeli — yarım veriyle iflas skoru üretmek tehlikelidir.
     """
-    if not _API_VAR:
-        return
     y = client.post("/zscore", json={
         "total_assets": 100, "current_assets": 60, "current_liabilities": 40,
         "total_liabilities": 50, "retained_earnings": 20, "ebit_annual": 10,
@@ -265,8 +246,6 @@ def test_loan_endpoint_returns_json_serialisable_numbers():
     Motor içeride numpy dizileri de üretiyor; bunlar JSON'a çevrilemez.
     Uç nokta yalnızca skalerleri döndürmeli, yoksa 500 alırız.
     """
-    if not _API_VAR:
-        return
     y = client.post("/loan", json={
         "current_cash": 4_200_000, "monthly_revenue": 6_800_000,
         "monthly_fixed_expense": 5_950_000, "existing_debt_service": 950_000,
@@ -286,8 +265,6 @@ def test_advise_always_answers():
     Anahtar yoksa bile kural tabanlı motor devreye girmeli — API boş cevap
     dönmemeli.
     """
-    if not _API_VAR:
-        return
     y = client.post("/advise", json={
         "current_cash": 4_200_000, "net_operating": -640_000,
         "monthly_net": -850_000, "ruin_probability": 0.63,
@@ -307,8 +284,6 @@ def test_api_and_engine_agree():
     Asıl risk buydu: HTTP katmanı zamanla kendi hesabını yapmaya başlarsa
     Streamlit arayüzü ile API aynı şirket için farklı sayı gösterir.
     """
-    if not _API_VAR:
-        return
     from modules import monte_carlo as mc
 
     dogrudan = mc.run(mc.StressParams(**_SIRKET))
@@ -331,8 +306,6 @@ def test_api_arayuz_yigini_olmadan_ayaga_kalkar():
     kaldırıldı ve sessizce hiçbir şey engellemez — o haliyle yazılan bir test
     her koşulda yeşil yanar, yani hiçbir şeyi korumaz.
     """
-    if not _API_VAR:
-        return
 
     yasak = {"streamlit", "plotly", "reportlab"}
 
@@ -370,25 +343,6 @@ def test_api_arayuz_yigini_olmadan_ayaga_kalkar():
             del sys.modules[ad]
         sys.modules.update(onceki)
 
-
-if __name__ == "__main__":
-    if not _API_VAR:
-        print("  fastapi kurulu değil — API testleri atlandı")
-        sys.exit(0)
-    passed = failed = 0
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn()
-                print(f"  ✓ {name}")
-                passed += 1
-            except AssertionError as e:
-                print(f"  ✗ {name}\n      {e}")
-                failed += 1
-    print(f"\n{passed} geçti, {failed} kaldı")
-    sys.exit(1 if failed else 0)
-
-
 def test_every_panel_endpoint_answers_the_shared_contract():
     """
     Dört motorun ortak sözleşmesi (bkz. utils/sufficiency.py) HTTP cevabında da
@@ -422,3 +376,21 @@ def test_every_panel_endpoint_answers_the_shared_contract():
         "current_cash": 1_000_000, "monthly_collections": 500_000,
         "monthly_fixed_expense": 400_000, "monthly_debt_service": 120_000}).json()
     assert dolu["informative"] == dolu["available"] is True
+
+
+if __name__ == "__main__":
+    if not _API_VAR:
+        print("  fastapi kurulu değil — API testleri atlandı")
+        sys.exit(0)
+    passed = failed = 0
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            try:
+                fn()
+                print(f"  ✓ {name}")
+                passed += 1
+            except AssertionError as e:
+                print(f"  ✗ {name}\n      {e}")
+                failed += 1
+    print(f"\n{passed} geçti, {failed} kaldı")
+    sys.exit(1 if failed else 0)
