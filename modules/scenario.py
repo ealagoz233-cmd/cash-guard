@@ -119,6 +119,22 @@ def to_query_params(senaryo: dict) -> dict[str, str]:
     return cikti
 
 
+def _tek_deger(ham) -> str:
+    """
+    Adres çubuğundaki bir değeri karşılaştırılabilir tek dizeye indirir.
+
+    `from_query_params` liste gelen değeri baştan beri açıyor (Streamlit bazı
+    sürümlerde `?kredi=5000000`'ı `["5000000"]` olarak veriyor); burası
+    vermiyordu. Sonuç: o sürümlerde karşılaştırma HER koşuda başarısız oluyor,
+    fonksiyon `False` dönüyor ve app.py adres çubuğuna yeniden yazıyordu — yani
+    bu fonksiyonun tek varlık sebebi olan döngü koruması, korumak istediği
+    durumda çalışmıyordu.
+    """
+    if isinstance(ham, (list, tuple)):
+        return str(ham[0]) if ham else ""
+    return str(ham)
+
+
 def ayni_mi(senaryo: dict, qp) -> bool:
     """
     Adres çubuğu zaten bu senaryoyu gösteriyor mu?
@@ -126,4 +142,4 @@ def ayni_mi(senaryo: dict, qp) -> bool:
     Streamlit'te query_params'a yazmak yeniden çalıştırma tetikleyebiliyor;
     gereksiz yazmayı önlemek sonsuz döngüyü engeller.
     """
-    return to_query_params(senaryo) == {k: str(v) for k, v in dict(qp).items()}
+    return to_query_params(senaryo) == {k: _tek_deger(v) for k, v in dict(qp).items()}

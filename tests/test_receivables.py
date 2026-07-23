@@ -227,6 +227,25 @@ def test_mock_company_dso_equals_the_declared_collection_days():
     assert abs(p.dso - d["avg_collection_days"]) < 0.5
 
 
+def test_an_invoice_that_is_not_due_yet_lands_in_the_youngest_bucket():
+    """
+    Vadesi gelmemiş bir alacak, kovaların ALT sınırının da altına düşebilir.
+
+    `_classify` hiçbir kovaya girmeyeni koşulsuz en yaşlıya (%50 tahsil
+    edilemez) atıyordu; ilk kovanın `lo=-10_000` sınırı bunu yalnızca
+    örtüyordu. Yönü tersine çeviren bir sınıflandırma, henüz ödeme günü bile
+    gelmemiş parayı şüpheli alacak yazar — yani en iyimser kalemi en kötü
+    kalem sayar.
+    """
+    p = age([{"amount": 1_000, "overdue_days": -20_000}])
+    dolu = [r for r in p.rows if r.amount > 0]
+    assert len(dolu) == 1
+    assert dolu[0].name == DEFAULT_BUCKETS[0].name, \
+        f"vadesi gelmemiş alacak '{dolu[0].name}' kovasına düştü"
+    assert p.expected_loss == 1_000 * DEFAULT_BUCKETS[0].loss_rate
+    assert p.overdue_amount == 0
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

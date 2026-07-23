@@ -294,12 +294,22 @@ def from_company(data: dict) -> ZScoreResult:
         bos.missing_fields = _user_fields(bos.missing_fields)
         return bos
 
-    aylik_gelir = as_float(data.get("avg_monthly_revenue")) or 0.0
-    aylik_gider = as_float(data.get("avg_monthly_fixed_expense")) or 0.0
+    # `default=None` ZORUNLU. Varsayılan 0.0 ile okunduğunda olmayan bir aylık
+    # gelir "sıfır ciro" sayılıyor, oradan `annual_sales=0` ve `ebit_annual`
+    # türetiliyor ve `compute` bunları dolu alan olarak görüp SKOR ÜRETİYORDU.
+    # Yani modülün tek kuralı — yarım veriyle skor verme — türetme adımında
+    # sessizce deliniyordu: kullanıcı bilanço yükleyip gelir alanını boş
+    # bırakınca ekranda gerçek görünen bir "Tehlike" skoru beliriyordu.
+    aylik_gelir = as_float(data.get("avg_monthly_revenue"), None)
+    aylik_gider = as_float(data.get("avg_monthly_fixed_expense"), None)
     amortisman = as_float(bs.get("annual_depreciation")) or 0.0
 
-    bs.setdefault("annual_sales", aylik_gelir * 12)
-    bs.setdefault("ebit_annual", (aylik_gelir - aylik_gider) * 12 - amortisman)
+    # Türetilemeyen alan YAZILMAZ; `compute` onu eksik sayar ve `_user_fields`
+    # kullanıcıya doldurulabilir adıyla söyler.
+    if aylik_gelir is not None:
+        bs.setdefault("annual_sales", aylik_gelir * 12)
+    if aylik_gelir is not None and aylik_gider is not None:
+        bs.setdefault("ebit_annual", (aylik_gelir - aylik_gider) * 12 - amortisman)
 
     sonuc = compute(bs, pick_model(data.get("sector")))
     sonuc.missing_fields = _user_fields(sonuc.missing_fields)

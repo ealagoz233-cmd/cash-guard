@@ -357,8 +357,10 @@ def _bos_taban(etiket: str) -> dict:
     return base
 
 
-def _uygula_bicim_a(df: pd.DataFrame, base: dict, uyarilar: list) -> None:
+def _uygula_bicim_a(df: pd.DataFrame, base: dict, uyarilar: list,
+                    yazilan: set[str] | None = None) -> None:
     """Anahtar-değer tablosunu sözlüğe işler (skaler + bilanço + gider)."""
+    yazilan = yazilan if yazilan is not None else set()
     cols = set(df.columns)
     kcol = "alan" if "alan" in cols else "field"
     vcol = "deger" if "deger" in cols else "value"
@@ -404,37 +406,102 @@ def _uygula_bicim_a(df: pd.DataFrame, base: dict, uyarilar: list) -> None:
             continue
         if grup.hedef:
             base[grup.hedef] = secilen
+            yazilan.add(grup.hedef)
         else:
             base.update(secilen)
+            yazilan.update(secilen)
 
     gider = {k[len(GIDER_ONEKI):]: v for k, v in kv.items()
              if k.startswith(GIDER_ONEKI) and v > 0}
     if gider:
         base[GIDER_HEDEF] = gider
+        yazilan.add(GIDER_HEDEF)
 
     # Metin alanları: dosya adından gelen etiketi kullanıcının kendi yazdığı
     # değer ezer. `as_of` gerçek bir tarihse 13 haftalık takvim ondan başlar.
     for ad, deger in metin.items():
         base[ad] = deger
-
-    # Tahsilat verilmediyse faturalanan gelire eşitle (alacak boşluğu = 0).
-    if "avg_monthly_collections" not in kv:
-        base["avg_monthly_collections"] = base["avg_monthly_revenue"]
+        yazilan.add(ad)
 
 
-def _uygula_bicim_b(df: pd.DataFrame, base: dict, uyarilar: list) -> None:
+# Biçim B'nin sayı olarak okuduğu sütunlar. Metin gelen bir hücre NaN'a
+# çevrilir; ortalama o satırı atlayarak alınır.
+_BICIM_B_SAYI_SUTUNLARI = ("revenue", "fixed_expense", "collections", "cash_end")
+
+
+def _sayilastir(df: pd.DataFrame, sutunlar, uyarilar: list) -> pd.DataFrame:
+    """
+    Sayı sütunlarını Türkçe biçimi çözerek float'a çevirir.
+
+    Biçim A bunu baştan beri `_to_float` ile yapıyordu, Biçim B ise ham
+    `pd.read_csv` çıktısına güveniyordu. Sonuç: Türk Excel'inden çıkmış bir aylık
+    tablo ('5.000.000', '4.250.000,50') object dtype olarak okunuyor ve
+    `.mean()` `Cannot perform reduction 'mean' with string dtype` diye
+    patlıyordu — kullanıcı da dosyasının neden reddedildiğini anlatan tek kelime
+    Türkçe görmüyordu. Uygulamanın hedef kitlesi tam olarak o dosyayı üretiyor.
+
+    Çevrilemeyen tek bir hücre dosyanın tamamını düşürmez: o hücre NaN olur,
+    ortalama kalan aylardan alınır ve kaç satırın atlandığı söylenir.
+    """
+    df = df.copy()
+    atlanan = 0
+    for sutun in sutunlar:
+        if sutun not in df.columns:
+            continue
+        cevrilen = []
+        for ham in df[sutun]:
+            try:
+                cevrilen.append(_to_float(ham))
+            except (TypeError, ValueError):
+                cevrilen.append(float("nan"))
+                atlanan += 1
+        df[sutun] = pd.to_numeric(pd.Series(cevrilen, index=df.index))
+    if atlanan:
+        uyarilar.append(Uyari(
+            "warning",
+            f"Aylık tabloda sayıya çevrilemeyen {atlanan} hücre atlandı; "
+            "ortalamalar kalan aylardan hesaplandı."))
+    return df
+
+
+def _ortalama(df: pd.DataFrame, sutun: str) -> float | None:
+    """Sütun ortalaması; hiç geçerli sayı yoksa None (uydurma sıfır değil)."""
+    if sutun not in df.columns:
+        return None
+    deger = df[sutun].mean()
+    return None if pd.isna(deger) else float(deger)
+
+
+def _uygula_bicim_b(df: pd.DataFrame, base: dict, uyarilar: list,
+                    yazilan: set[str] | None = None) -> None:
     """Aylık geçmiş tablosunu sözlüğe işler."""
-    cols = set(df.columns)
-    base["avg_monthly_revenue"] = float(df["revenue"].mean())
-    base["avg_monthly_fixed_expense"] = float(df["fixed_expense"].mean())
-    if "cash_end" in cols:
-        base["current_cash"] = float(df["cash_end"].iloc[-1])
-    base["avg_monthly_collections"] = float(
-        df["collections"].mean() if "collections" in cols else df["revenue"].mean())
+    yazilan = yazilan if yazilan is not None else set()
+    df = _sayilastir(df, _BICIM_B_SAYI_SUTUNLARI, uyarilar)
+
+    for alan, sutun in (("avg_monthly_revenue", "revenue"),
+                        ("avg_monthly_fixed_expense", "fixed_expense")):
+        deger = _ortalama(df, sutun)
+        if deger is not None:
+            base[alan] = deger
+            yazilan.add(alan)
+
+    son_kasa = df["cash_end"].dropna() if "cash_end" in df.columns else []
+    if len(son_kasa):
+        base["current_cash"] = float(son_kasa.iloc[-1])
+        yazilan.add("current_cash")
+
+    tahsilat = _ortalama(df, "collections")
+    if tahsilat is None:
+        tahsilat = _ortalama(df, "revenue")
+    if tahsilat is not None:
+        base["avg_monthly_collections"] = tahsilat
+        yazilan.add("avg_monthly_collections")
+
     base["history"] = normalize_history(df).to_dict("records")
 
 
-def _uygula_bicim_c(df: pd.DataFrame, base: dict, uyarilar: list) -> None:
+def _uygula_bicim_c(df: pd.DataFrame, base: dict, uyarilar: list,
+                    yazilan: set[str] | None = None) -> None:
     """
     Alacak yaşlandırma listesini sözlüğe işler.
 
@@ -483,23 +550,29 @@ def _uygula_bicim_c(df: pd.DataFrame, base: dict, uyarilar: list) -> None:
     if not kalemler:
         return
 
+    yazilan = yazilan if yazilan is not None else set()
     kalemler.sort(key=lambda k: k["amount"], reverse=True)
     base["top_receivables"] = kalemler
-    base.setdefault("receivables_outstanding", sum(k["amount"] for k in kalemler))
+    yazilan.add("top_receivables")
+    if "receivables_outstanding" not in yazilan:
+        base["receivables_outstanding"] = sum(k["amount"] for k in kalemler)
+        yazilan.add("receivables_outstanding")
 
 
-def _tani_ve_uygula(df: pd.DataFrame, base: dict, uyarilar: list) -> bool:
+def _tani_ve_uygula(df: pd.DataFrame, base: dict, uyarilar: list,
+                    yazilan: set[str] | None = None) -> bool:
     """Tablonun biçimini tanıyıp uygular; tanınmazsa False döner."""
+    yazilan = yazilan if yazilan is not None else set()
     cols = set(df.columns)
     if {"alan", "deger"} <= cols or {"field", "value"} <= cols:
-        _uygula_bicim_a(df, base, uyarilar)
+        _uygula_bicim_a(df, base, uyarilar, yazilan)
         return True
     if {"revenue", "fixed_expense"} <= cols:
-        _uygula_bicim_b(df, base, uyarilar)
+        _uygula_bicim_b(df, base, uyarilar, yazilan)
         return True
     if _sutun_bul(cols, _ALACAK_SUTUNLARI["tutar"]) and \
             _sutun_bul(cols, _ALACAK_SUTUNLARI["gecikme"]):
-        _uygula_bicim_c(df, base, uyarilar)
+        _uygula_bicim_c(df, base, uyarilar, yazilan)
         return True
     return False
 
@@ -529,6 +602,9 @@ def parse_files(files) -> YuklemeSonucu:
     adlar = ", ".join(safe_display_name(f.name) for f in dosyalar[:3])
     base = _bos_taban(f"{adlar} (yüklendi)")
     uyarilar: list[Uyari] = []
+    # Hangi alanın KULLANICI verisinden geldiği. Bir biçimin varsayılanı,
+    # başka bir dosyanın gerçek ölçümünü ezmesin diye tutuluyor.
+    yazilan: set[str] = set()
 
     taninan = 0
     for file in dosyalar:
@@ -540,7 +616,7 @@ def parse_files(files) -> YuklemeSonucu:
             continue
 
         try:
-            if _tani_ve_uygula(df, base, uyarilar):
+            if _tani_ve_uygula(df, base, uyarilar, yazilan):
                 taninan += 1
                 continue
         except Exception as e:  # noqa: BLE001
@@ -556,6 +632,15 @@ def parse_files(files) -> YuklemeSonucu:
             "Biçim A: 'alan,deger'. Biçim B: month, revenue, fixed_expense… "
             "Biçim C: musteri, tutar, gecikme_gun. Bulunan sütunlar: "
             f"{', '.join(sorted(df.columns))[:120]}")))
+
+    # Tahsilat hiçbir dosyada verilmediyse faturalanan gelire eşitlenir (alacak
+    # boşluğu = 0). Bu varsayım BÜTÜN dosyalar okunduktan sonra, tek yerde
+    # yapılıyor: Biçim A'nın içindeyken, kendisi tahsilat sütunu taşımayan bir
+    # anahtar-değer dosyası aylık tablodan gelen GERÇEK tahsilat ortalamasını
+    # sessizce eziyordu. Aynı iki dosya farklı sırada yüklenince farklı sonuç
+    # veriyordu — oysa modülün sözü sıranın önemsiz olduğu.
+    if "avg_monthly_collections" not in yazilan:
+        base["avg_monthly_collections"] = base["avg_monthly_revenue"]
 
     return YuklemeSonucu(base if taninan else None, uyarilar)
 

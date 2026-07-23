@@ -19,6 +19,8 @@ import sys
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from modules import weekly
@@ -166,6 +168,33 @@ def test_projection_starts_the_day_after_the_data_date():
     """Veri 30 Haziran itibarıyla; projeksiyon 1 Temmuz'da başlamalı."""
     assert weekly.parse_start("2026-06-30") == date(2026, 7, 1)
     assert weekly.parse_start(date(2026, 6, 30)) == date(2026, 7, 1)
+
+
+def test_parse_start_always_returns_a_plain_date():
+    """
+    `datetime` bir `date` alt sınıfıdır; saatli bir değer isinstance kontrolünü
+    geçip olduğu gibi dönüyordu.
+
+    Pandas'ın okuduğu bir tarih sütunu (`Timestamp`) tam olarak öyle gelir ve
+    hafta başlangıçları saatli kalıyordu: API'de `"2026-07-01T00:00:00"`,
+    arayüzde saatli hafta etiketi. Tablonun birimi gün, dolayısıyla dönüş de
+    gün olmalı.
+    """
+    from datetime import datetime
+
+    beklenen = date(2026, 7, 1)
+    for girdi in (date(2026, 6, 30),
+                  datetime(2026, 6, 30),
+                  datetime(2026, 6, 30, 23, 59, 59),
+                  pd.Timestamp("2026-06-30 08:15")):
+        cikti = weekly.parse_start(girdi)
+        assert type(cikti) is date, f"{girdi!r} -> {type(cikti).__name__} döndü"
+        assert cikti == beklenen
+
+    # Haftaya da düz tarih olarak yansımalı (API `.isoformat()` çağırıyor).
+    p = weekly.build(1_000_000, 0, None, 0, start=weekly.parse_start(
+        pd.Timestamp("2026-06-30 08:15")), weeks=2)
+    assert p.weeks[0].start.isoformat() == "2026-07-01"
 
 
 def test_a_broken_date_falls_back_instead_of_crashing():

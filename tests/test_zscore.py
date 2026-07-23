@@ -162,6 +162,33 @@ def test_from_company_derives_sales_and_ebit_from_the_monthly_scalars():
     assert x3.ratio == (2_400_000 - 400_000) / 10_000_000  # FVÖK, amortisman düşülmüş
 
 
+def test_a_balance_sheet_without_revenue_data_produces_no_score():
+    """
+    Modülün tek kuralı: yarım veriyle skor üretme. Türetme adımı bu kuralı
+    sessizce deliyordu.
+
+    `avg_monthly_revenue` okunurken varsayılan 0.0 kullanılıyordu; yani alanın
+    OLMAMASI ile "cirosu sıfır" aynı sinyale biniyordu. Oradan `annual_sales=0`
+    ve `ebit_annual` türetiliyor, `compute` bunları dolu alan sayıyor ve gerçek
+    görünen bir skor basıyordu. Kullanıcı bilançosunu yükleyip gelir satırını
+    boş bıraktığında ekranda uydurulmuş bir 'Tehlike' hükmü beliriyordu.
+    """
+    bilanco = {"total_assets": 100, "current_assets": 50,
+               "current_liabilities": 20, "total_liabilities": 40,
+               "retained_earnings": 10}
+    r = z.from_company({"sector": "tekstil üretim", "balance_sheet": bilanco})
+    assert r.score is None and not r.available, \
+        f"gelir verisi yokken skor üretildi: {r.score}"
+    assert "avg_monthly_revenue" in r.missing_fields
+    assert "avg_monthly_fixed_expense" in r.missing_fields
+
+    # Gelir verilince aynı bilanço skor üretmeli — koruma fazla geniş olmasın.
+    dolu = z.from_company({"sector": "tekstil üretim", "balance_sheet": bilanco,
+                           "avg_monthly_revenue": 20,
+                           "avg_monthly_fixed_expense": 15})
+    assert dolu.available and dolu.missing_fields == []
+
+
 def test_from_company_without_a_balance_sheet_reports_everything_missing():
     """
     Kullanıcı kendi CSV'sini yüklediğinde bilanço gelmez; kart gizlenmeli.
