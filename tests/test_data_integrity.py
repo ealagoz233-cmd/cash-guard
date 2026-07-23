@@ -554,6 +554,72 @@ def test_indirilen_sablon_geri_yuklenebilir():
     assert sonuc["existing_monthly_debt_service"] == 950000.0
 
 
+_TR_AYLIK_TABLO = (
+    "month,revenue,fixed_expense,collections,cash_end\n"
+    "2026-01,\"5.000.000\",\"4.000.000\",\"4.500.000\",\"10.000.000\"\n"
+    "2026-02,\"5.100.000\",\"4.100.000\",\"4.600.000\",\"10.500.000\"\n"
+)
+
+
+def test_turkish_numbers_are_parsed_in_the_monthly_table_too():
+    """
+    Biçim A Türkçe sayıyı baştan beri çözüyordu, Biçim B çözmüyordu.
+
+    Aylık tablo Türk Excel'inden çıktığında sütunlar '5.000.000' olarak gelir;
+    ham pandas bunu metin okur ve `.mean()` `Cannot perform reduction 'mean'
+    with string dtype` diye patlar. Kullanıcı dosyasının komple reddedildiğini
+    ve gerekçe olarak İngilizce bir pandas iç hatasını görüyordu — üstelik
+    şablonu doğru doldurmuşken. İki biçim aynı sayıyı aynı şekilde okumalı.
+    """
+    d = parse_uploaded(BinaryUpload("gecmis.csv", _TR_AYLIK_TABLO.encode("utf-8")))
+    assert d is not None, "Türkçe biçimli aylık tablo reddedildi"
+    assert d["avg_monthly_revenue"] == 5_050_000
+    assert d["avg_monthly_fixed_expense"] == 4_050_000
+    assert d["avg_monthly_collections"] == 4_550_000
+    assert d["current_cash"] == 10_500_000
+    assert len(d["history"]) == 2
+
+
+def test_one_broken_cell_does_not_discard_the_whole_monthly_table():
+    """Tek bozuk hücre dosyayı düşürmemeli: o ay atlanır, gerisi okunur."""
+    bozuk = _TR_AYLIK_TABLO.replace('"5.100.000"', "bilinmiyor")
+    d = parse_uploaded(BinaryUpload("gecmis.csv", bozuk.encode("utf-8")))
+    assert d is not None
+    assert d["avg_monthly_revenue"] == 5_000_000, "ortalama kalan aydan alınmalı"
+
+
+def test_a_defaulted_field_never_overwrites_another_files_measurement():
+    """
+    Biçim A tahsilat satırı taşımıyorsa onu faturalanan gelire EŞİTLİYOR. Bu
+    makul bir varsayım — ama aylık tablo gerçek tahsilat ortalamasını zaten
+    yazdıysa varsayımın onu ezmemesi gerekir.
+
+    Eskiden eziyordu ve yalnızca dosya sırasına bağlıydı: aynı iki dosya
+    B→A yüklenince tahsilat 7.000.000, A→B yüklenince 4.550.000 çıkıyordu.
+    Aradaki 2,45 milyonluk fark alacak boşluğunun tamamı — yani modelin
+    ölçtüğü şeyin kendisi.
+    """
+    a = FakeUpload("a.csv", "alan,deger\ncurrent_cash,9000000\n"
+                            "avg_monthly_revenue,7000000\n")
+    b = FakeUpload("b.csv", "month,revenue,fixed_expense,collections\n"
+                            "2026-01,5000000,4000000,4500000\n"
+                            "2026-02,5100000,4100000,4600000\n")
+    ileri = parse_uploaded_files([b, a])
+    geri = parse_uploaded_files([
+        FakeUpload("a.csv", a.getvalue()), FakeUpload("b.csv", b.getvalue())])
+
+    assert ileri["avg_monthly_collections"] == 4_550_000, \
+        "A'nın varsayılanı B'nin ölçümünü ezdi"
+    assert ileri["avg_monthly_collections"] == geri["avg_monthly_collections"]
+
+
+def test_collections_still_fall_back_to_revenue_when_nobody_supplies_them():
+    """Varsayım kaldırılmadı, yalnızca ölçümün önüne geçmemesi sağlandı."""
+    d = parse_uploaded(FakeUpload("a.csv", "alan,deger\n"
+                                           "avg_monthly_revenue,7000000\n"))
+    assert d["avg_monthly_collections"] == 7_000_000
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from utils.format import as_float as _as_float
 
@@ -142,7 +142,14 @@ def parse_start(as_of, fallback: date | None = None) -> date:
 
     Tarih dışarıdan geliyor ve kullanıcı dosyasından gelebilir; bozuk bir dize
     yüzünden uygulama patlamamalı.
+
+    Dönüş HER ZAMAN `date`tir. `datetime` de bir `date` alt sınıfı olduğu için
+    saatli bir değer eskiden olduğu gibi geçip gidiyordu; pandas'ın okuduğu bir
+    tarih sütunu (`Timestamp`) tam olarak öyle gelir ve `WeekRow.start` saatli
+    kalıyordu — API'de `"2026-07-01T00:00:00"`, arayüzde saatli hafta etiketi.
     """
+    if isinstance(as_of, datetime):
+        as_of = as_of.date()
     if isinstance(as_of, date):
         return as_of + timedelta(days=1)
     try:

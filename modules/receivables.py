@@ -183,11 +183,19 @@ class AgingProfile:
 
 
 def _classify(overdue_days: float, buckets: tuple[Bucket, ...]) -> Bucket:
-    """Bir alacağı kovasına yerleştirir; hiçbirine girmezse en yaşlısına."""
+    """
+    Bir alacağı kovasına yerleştirir.
+
+    Hiçbirine girmiyorsa YÖN önemlidir: sınırların üstündeyse en yaşlı kovaya,
+    ALTINDAYSA en gencine düşer. Koşulsuz `buckets[-1]` yazmak vadesi bütün
+    kovaların altında kalan bir alacağı — yani daha ödeme günü bile gelmemiş
+    parayı — %50 tahsil edilemez saydırıyordu; ilk kovanın `lo=-10_000` sınırı
+    bunu yalnızca örtüyordu, kaldırmıyordu.
+    """
     for b in buckets:
         if b.contains(overdue_days):
             return b
-    return buckets[-1]
+    return buckets[0] if overdue_days < min(b.lo for b in buckets) else buckets[-1]
 
 
 def age(

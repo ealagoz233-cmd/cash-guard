@@ -107,6 +107,27 @@ def test_slider_bounds_match_the_app():
     assert '"Vade (ay)", 6, 60' in kaynak, "vade sürgüsünün sınırı değişmiş olabilir"
 
 
+def test_the_rerun_guard_survives_list_valued_query_params():
+    """
+    Streamlit bazı sürümlerde `?kredi=5000000`'ı `["5000000"]` olarak veriyor.
+
+    `from_query_params` bu durumu baştan beri açıyordu, `ayni_mi` açmıyordu:
+    karşılaştırma `'5000000' == "['5000000']"` üzerinden yapılıyor ve HER
+    koşuda False dönüyordu. app.py de her koşuda adres çubuğuna yeniden
+    yazıyordu — yani bu fonksiyonun tek varlık sebebi olan döngü koruması,
+    tam da korumak için yazıldığı Streamlit sürümünde çalışmıyordu.
+    """
+    senaryo = sc.varsayilanlar() | {"kredi": 5_000_000}
+    duz = {"kredi": "5000000"}
+    assert sc.ayni_mi(senaryo, duz)
+    assert sc.ayni_mi(senaryo, {"kredi": ["5000000"]}), \
+        "liste değerli parametre farklı görünüyor → sonsuz yeniden yazma"
+    # Gerçekten farklı bir senaryo hâlâ farklı görünmeli.
+    assert not sc.ayni_mi(senaryo, {"kredi": ["9000000"]})
+    # Ve iki okuma yolu aynı cevabı vermeli.
+    assert sc.from_query_params({"kredi": ["5000000"]})["kredi"] == 5_000_000
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):
